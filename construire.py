@@ -50,6 +50,8 @@ TAGS_UTILES = {
     "check_date", "survey:date", "description", "description:fr", "website", "contact:website", "phone",
     "contact:phone", "motorhome", "caravans", "caravan", "parking", "amenity", "tourism", "shop", "natural",
     "man_made", "fuel:lpg", "wheelchair",
+    # Stations-service : enseigne, gazole, AdBlue, accès poids lourds (gabarit).
+    "brand", "fuel:diesel", "fuel:adblue", "hgv",
 }
 
 PARKING_EXCLUS = {"underground", "multi-storey", "rooftop", "street_side", "lane", "on_kerb", "half_on_kerb"}
@@ -85,6 +87,8 @@ def categorie(t, type_osm):
         return "LAVERIE"
     if amenity == "fuel" and t.get("fuel:lpg") == "yes":
         return "GPL"
+    if amenity == "fuel":
+        return "STATION"
     if shop == "gas":
         return "GAZ"
     if shop == "supermarket":

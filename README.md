@@ -7,7 +7,7 @@ Paquets de points utiles aux camping-cars, un par pays européen, fabriqués cha
 - aires et campings ;
 - parkings autorisés et grands parkings ;
 - toilettes, douches et laveries ;
-- GPL et gaz ;
+- stations-service (enseigne, gazole, AdBlue, accès poids lourds), GPL et gaz ;
 - supermarchés.
 
 L'appli SentierGo télécharge `index.json` au démarrage, puis les paquets des pays choisis lorsqu'ils ont changé.
