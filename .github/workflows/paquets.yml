@@ -26,7 +26,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Outils
-        run: sudo apt-get update -q && sudo apt-get install -y -q osmium-tool
+        # Une machine figée sur apt ne doit pas bloquer la semaine : 10 min au plus, 3 essais.
+        timeout-minutes: 10
+        run: |
+          for i in 1 2 3; do
+            sudo apt-get update -q -o Acquire::Retries=3 && sudo apt-get install -y -q -o Acquire::Retries=3 osmium-tool && break
+            sleep 20
+          done
+          osmium --version
       - name: Fabrication
         run: python3 construire.py --groupe ${{ matrix.groupe }} --groupes 8 --pays "${{ github.event.inputs.pays }}" --sortie sortie
       - uses: actions/upload-artifact@v4
