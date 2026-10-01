@@ -1,0 +1,63 @@
+# Fabrique les paquets pays de SentierGo chaque semaine (lundi 3 h UTC) et les
+# publie dans la release « donnees ». Lançable à la main pour quelques pays.
+name: Paquets pays
+
+on:
+  schedule:
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+    inputs:
+      pays:
+        description: "Codes pays séparés par des virgules (vide = toute l'Europe)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  construire:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        groupe: [0, 1, 2, 3, 4, 5, 6, 7]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Outils
+        run: sudo apt-get update -q && sudo apt-get install -y -q osmium-tool
+      - name: Fabrication
+        run: python3 construire.py --groupe ${{ matrix.groupe }} --groupes 8 --pays "${{ github.event.inputs.pays }}" --sortie sortie
+      - uses: actions/upload-artifact@v4
+        with:
+          name: paquets-${{ matrix.groupe }}
+          path: |
+            sortie/*.json.gz
+            sortie/*.meta.json
+          if-no-files-found: ignore
+          retention-days: 2
+
+  publier:
+    needs: construire
+    if: always()
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: paquets
+      - name: Release « donnees »
+        run: gh release view donnees >/dev/null 2>&1 || gh release create donnees -t "Données SentierGo" -n "Paquets pays fabriqués chaque semaine depuis OpenStreetMap (© contributeurs OpenStreetMap, ODbL)."
+      - name: Index
+        run: |
+          gh release download donnees -p index.json -D ancien || true
+          python3 index.py paquets ancien/index.json index.json
+      - name: Publication
+        run: |
+          shopt -s globstar nullglob
+          fichiers=(paquets/**/*.json.gz)
+          if [ ${#fichiers[@]} -gt 0 ]; then gh release upload donnees "${fichiers[@]}" --clobber; fi
+          gh release upload donnees index.json --clobber
