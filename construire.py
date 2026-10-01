@@ -132,7 +132,15 @@ def construire(code, nom, dossier):
     filtre = os.path.join(dossier, f"{code}.filtre.pbf")
     seq = os.path.join(dossier, f"{code}.geojsonseq")
     url = f"https://download.geofabrik.de/europe/{nom}-latest.osm.pbf"
-    executer(["curl", "-sSfL", "--retry", "5", "--retry-delay", "20", "-o", pbf, url])
+    # Gros extraits (Allemagne : plus de 4 Go) : une coupure en route reprend où elle s'est arrêtée.
+    for essai in range(6):
+        try:
+            executer(["curl", "-sSfL", "--retry", "8", "--retry-all-errors", "--retry-delay", "20",
+                      "-C", "-", "-o", pbf, url])
+            break
+        except subprocess.CalledProcessError:
+            if essai == 5:
+                raise
     executer(["osmium", "tags-filter", "--overwrite", "-o", filtre, pbf] + FILTRE)
     os.remove(pbf)
     executer(["osmium", "export", "--overwrite", "-f", "geojsonseq", "-o", seq,
