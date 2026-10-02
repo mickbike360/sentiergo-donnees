@@ -78,8 +78,8 @@ def categorie(t, type_osm):
         return "EAU"
     if t.get("natural") == "spring":
         return "SOURCE"
-    if amenity == "parking" and t.get("sg:vue") and t.get("motorhome") != "no" and t.get("access") not in ACCES_EXCLUS \
-            and t.get("parking") not in PARKING_EXCLUS:
+    if amenity == "parking" and t.get("sg:vue") and t.get("motorhome") != "no" and t.get("caravan") != "no" \
+            and t.get("access") not in ACCES_EXCLUS and t.get("parking") not in PARKING_EXCLUS:
         # Parking à deux pas d'un point de vue, d'une plage ou d'une cascade.
         return "SPOT"
     if amenity == "parking" and t.get("motorhome") in ("yes", "designated"):
