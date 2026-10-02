@@ -71,12 +71,19 @@ PARKING_EXCLUS = {"underground", "multi-storey", "rooftop", "street_side", "lane
 ACCES_EXCLUS = {"private", "no", "customers", "permit", "delivery"}
 
 
+def camping_ouvert(t):
+    """Copie de Categorie.campingOuvert : ni interdit, ni réservé (scouts, groupes, bivouac, accès privé)."""
+    return (t.get("motorhome") != "no" and t.get("caravans") != "no" and t.get("scout") != "yes"
+            and t.get("group_only") != "yes" and t.get("backcountry") != "yes"
+            and t.get("camp_site") not in ("basic", "scout") and t.get("access") not in ("private", "no"))
+
+
 def confirme_camping_car(t):
     """Copie de Categorie.confirmeCampingCar : aire, camping qui accepte, ou parking marqué autorisé."""
     if t.get("tourism") == "caravan_site":
         return True
     if t.get("tourism") == "camp_site":
-        return t.get("motorhome") != "no" and t.get("caravans") != "no"
+        return camping_ouvert(t)
     if t.get("amenity") == "parking":
         return t.get("motorhome") in ("yes", "designated") and t.get("access") not in ("private", "no")
     return False
@@ -108,7 +115,7 @@ def categorie(t, type_osm):
             and t.get("access") not in ACCES_EXCLUS and t.get("motorhome") != "no" and t.get("caravan") != "no"):
         # Grands parkings : dessinés en surface seulement (comme la requête de l'appli).
         return "PARKING_VERIF"
-    if tourism == "camp_site" and t.get("motorhome") != "no" and t.get("caravans") != "no":
+    if tourism == "camp_site" and camping_ouvert(t):
         return "CAMPING"
     if amenity == "toilets":
         return "TOILETTES"
