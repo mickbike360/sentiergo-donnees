@@ -43,6 +43,7 @@ FILTRE = [
     "nwr/man_made=water_tap",
     "nwr/natural=spring",
     "nwr/shop=laundry,gas,supermarket,convenience,farm",
+    "nwr/amenity=hospital", "nwr/healthcare=hospital",
     # Obstacles pour un camping-car (passages bas, étroits, poids, fortes pentes) : alertes sans réseau.
     "w/maxheight", "w/maxheight:physical", "n/maxheight", "w/maxwidth", "w/maxweight", "w/incline",
     # Ce qui fait un beau spot : point de vue, plage, cascade (pas des points affichés, voir beaux_spots).
@@ -65,6 +66,8 @@ TAGS_UTILES = {
     "sg:vue", "sg:vue_nom", "sg:vue_m",
     # Producteurs et marchés : produits, bio, type de distributeur.
     "produce", "organic", "vending",
+    # Hôpitaux : urgences (emergency=yes/no).
+    "emergency", "healthcare",
 }
 
 PARKING_EXCLUS = {"underground", "multi-storey", "rooftop", "street_side", "lane", "on_kerb", "half_on_kerb"}
@@ -137,6 +140,8 @@ def categorie(t, type_osm):
         return "MARCHE"
     if shop in ("supermarket", "convenience"):
         return "COURSES"
+    if amenity == "hospital" or t.get("healthcare") == "hospital":
+        return "HOPITAL"
     return None
 
 
