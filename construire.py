@@ -15,6 +15,7 @@ import argparse
 import datetime
 import gzip
 import json
+import math
 import os
 import subprocess
 import sys
@@ -40,6 +41,10 @@ FILTRE = [
     "nwr/man_made=water_tap",
     "nwr/natural=spring",
     "nwr/shop=laundry,gas,supermarket",
+    # Ce qui fait un beau spot : point de vue, plage, cascade (pas des points affichés, voir beaux_spots).
+    "n/tourism=viewpoint",
+    "nwr/natural=beach",
+    "n/waterway=waterfall",
 ]
 
 # Tags gardés : ce que l'appli affiche ou utilise pour trier.
@@ -52,6 +57,8 @@ TAGS_UTILES = {
     "man_made", "fuel:lpg", "wheelchair",
     # Stations-service : enseigne, gazole, AdBlue, accès poids lourds (gabarit).
     "brand", "fuel:diesel", "fuel:adblue", "hgv",
+    # Ajoutés par beaux_spots : beau lieu à proximité.
+    "sg:vue", "sg:vue_nom", "sg:vue_m",
 }
 
 PARKING_EXCLUS = {"underground", "multi-storey", "rooftop", "street_side", "lane", "on_kerb", "half_on_kerb"}
@@ -71,6 +78,10 @@ def categorie(t, type_osm):
         return "EAU"
     if t.get("natural") == "spring":
         return "SOURCE"
+    if amenity == "parking" and t.get("sg:vue") and t.get("motorhome") != "no" and t.get("access") not in ACCES_EXCLUS \
+            and t.get("parking") not in PARKING_EXCLUS:
+        # Parking à deux pas d'un point de vue, d'une plage ou d'une cascade.
+        return "SPOT"
     if amenity == "parking" and t.get("motorhome") in ("yes", "designated"):
         return "PARKING"
     if (amenity == "parking" and type_osm != "n" and t.get("parking") not in PARKING_EXCLUS
@@ -116,6 +127,54 @@ def centre(geom):
     return round(lat, 6), round(lon, 6)
 
 
+def attrait(t):
+    """« viewpoint », « beach » ou « waterfall » si l'objet est un beau lieu, sinon None."""
+    if t.get("tourism") == "viewpoint":
+        return "viewpoint"
+    if t.get("natural") == "beach":
+        return "beach"
+    if t.get("waterway") == "waterfall":
+        return "waterfall"
+    return None
+
+
+# Rayon autour d'un lieu de stationnement : un beau lieu à moins de 300 m (quelques minutes à pied).
+RAYON_SPOT_M = 300.0
+
+
+def beaux_spots(pois, attraits):
+    """
+    Marque les aires, campings et parkings proches d'un beau lieu : tags
+    sg:vue (type) et sg:vue_nom (son nom, s'il en a un). Recherche par grille
+    de 0,01° (environ 1 km) : rapide même pour un grand pays.
+    """
+    grille = {}
+    for a in attraits:
+        grille.setdefault((int(a[0] * 100 // 1), int(a[1] * 100 // 1)), []).append(a)
+    n = 0
+    for p in pois:
+        t = p["tags"]
+        if t.get("amenity") != "parking" and t.get("tourism") not in ("caravan_site", "camp_site"):
+            continue
+        lat, lon = p["lat"], p["lon"]
+        gi, gj = int(lat * 100 // 1), int(lon * 100 // 1)
+        meilleur = None
+        k = math.cos(math.radians(lat))
+        for di in (-1, 0, 1):
+            for dj in (-1, 0, 1):
+                for a in grille.get((gi + di, gj + dj), ()):
+                    d = math.hypot((a[0] - lat) * 111_320.0, (a[1] - lon) * 111_320.0 * k)
+                    if d <= RAYON_SPOT_M and (meilleur is None or d < meilleur[0]):
+                        meilleur = (d, a)
+        if meilleur:
+            t["sg:vue"] = meilleur[1][2]
+            if meilleur[1][3]:
+                t["sg:vue_nom"] = meilleur[1][3]
+            t["sg:vue_m"] = str(int(meilleur[0]))
+            n += 1
+    return n
+
+
 def identifiant(brut):
     """Identifiant au format de l'appli : n123, w456, r789 (les « aires » osmium sont décodées)."""
     if brut[0] in "nwr":
@@ -151,7 +210,7 @@ def construire(code, nom, dossier):
               "--geometry-types=point,linestring,polygon", "--add-unique-id=type_id", filtre])
     os.remove(filtre)
 
-    pois, vus = [], set()
+    pois, vus, attraits = [], set(), []
     with open(seq, encoding="utf-8") as f:
         for ligne in f:
             ligne = ligne.strip().lstrip("\x1e")
@@ -164,6 +223,15 @@ def construire(code, nom, dossier):
                 continue
             ident = identifiant(str(brut))
             tags = {k: str(v) for k, v in props.items() if not k.startswith("@")}
+            a = attrait(tags)
+            if a:
+                c = centre(o.get("geometry") or {})
+                if c:
+                    attraits.append((c[0], c[1], a, tags.get("name:fr") or tags.get("name") or ""))
+                # Une plage ou un point de vue n'est pas lui-même un point affiché
+                # (sauf s'il est aussi, par exemple, un point d'eau).
+                if categorie(tags, ident[0]) is None:
+                    continue
             cat = categorie(tags, ident[0])
             if cat is None or ident in vus:
                 continue
@@ -174,6 +242,8 @@ def construire(code, nom, dossier):
             pois.append({"id": ident, "lat": c[0], "lon": c[1],
                          "tags": {k: v for k, v in tags.items() if k in TAGS_UTILES}})
     os.remove(seq)
+    nb_spots = beaux_spots(pois, attraits)
+    print(f"{code} : {len(attraits)} beaux lieux, {nb_spots} stationnements à proximité", flush=True)
 
     date = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     sortie = os.path.join(dossier, f"{code}.json.gz")
