@@ -43,6 +43,8 @@ FILTRE = [
     "nwr/man_made=water_tap",
     "nwr/natural=spring",
     "nwr/shop=laundry,gas,supermarket,convenience,farm",
+    # Obstacles pour un camping-car (passages bas, étroits, poids, fortes pentes) : alertes sans réseau.
+    "w/maxheight", "w/maxheight:physical", "n/maxheight", "w/maxwidth", "w/maxweight", "w/incline",
     # Ce qui fait un beau spot : point de vue, plage, cascade (pas des points affichés, voir beaux_spots).
     "n/tourism=viewpoint",
     "nwr/natural=beach",
@@ -151,6 +153,20 @@ def centre(geom):
     return round(lat, 6), round(lon, 6)
 
 
+def point_sur(geom):
+    """Un point SUR l'objet (le sommet du milieu d'une rue) : la moyenne d'une rue en lacets peut tomber à côté."""
+    g, c = geom.get("type"), geom.get("coordinates")
+    if g == "Point":
+        return round(c[1], 6), round(c[0], 6)
+    if g == "LineString" and c:
+        p = c[len(c) // 2]
+        return round(p[1], 6), round(p[0], 6)
+    if g == "Polygon" and c and c[0]:
+        p = c[0][len(c[0]) // 2]
+        return round(p[1], 6), round(p[0], 6)
+    return centre(geom) if g else None
+
+
 def attrait(t):
     """« viewpoint », « beach » ou « waterfall » si l'objet est un beau lieu, sinon None."""
     if t.get("tourism") == "viewpoint":
@@ -199,6 +215,43 @@ def beaux_spots(pois, attraits):
     return n
 
 
+NOMBRE = re.compile(r"(\d+(?:[.,]\d+)?)")
+
+
+def nombre(v):
+    m = NOMBRE.search(v or "")
+    return float(m.group(1).replace(",", ".")) if m else None
+
+
+def obstacle(t, type_osm):
+    """
+    Copie des seuils utiles d'Alertes.kt (au plus large : les gabarits varient) :
+    hauteur < 4,5 m, largeur < 3,5 m, poids < 12 t, pente d'au moins 8 %. Renvoie
+    les tags à garder, ou None. Les pentes ne comptent que sur une route (highway).
+    """
+    garde = {}
+    h = nombre(t.get("maxheight") or t.get("maxheight:physical"))
+    if h is not None and 0.5 < h < 4.5:
+        for k in ("maxheight", "maxheight:physical"):
+            if k in t:
+                garde[k] = t[k]
+    if type_osm == "w":
+        l = nombre(t.get("maxwidth"))
+        if l is not None and 0.5 < l < 3.5:
+            garde["maxwidth"] = t["maxwidth"]
+        p = nombre(t.get("maxweight"))
+        if p is not None and 0.5 < p < 12:
+            garde["maxweight"] = t["maxweight"]
+        inc = t.get("incline") or ""
+        if t.get("highway") and ("%" in inc or "°" in inc):
+            n = nombre(inc)
+            if n is not None:
+                pct = math.tan(math.radians(n)) * 100 if "°" in inc else n
+                if abs(pct) >= 8:
+                    garde["incline"] = inc
+    return garde or None
+
+
 def identifiant(brut):
     """Identifiant au format de l'appli : n123, w456, r789 (les « aires » osmium sont décodées)."""
     if brut[0] in "nwr":
@@ -234,7 +287,7 @@ def construire(code, nom, dossier):
               "--geometry-types=point,linestring,polygon", "--add-unique-id=type_id", filtre])
     os.remove(filtre)
 
-    pois, vus, attraits = [], set(), []
+    pois, vus, attraits, obstacles = [], set(), [], []
     with open(seq, encoding="utf-8") as f:
         for ligne in f:
             ligne = ligne.strip().lstrip("\x1e")
@@ -247,6 +300,11 @@ def construire(code, nom, dossier):
                 continue
             ident = identifiant(str(brut))
             tags = {k: str(v) for k, v in props.items() if not k.startswith("@")}
+            ob = obstacle(tags, ident[0]) if ident[0] in "nw" else None
+            if ob:
+                c = point_sur(o.get("geometry") or {})
+                if c:
+                    obstacles.append({"id": ident, "lat": round(c[0], 6), "lon": round(c[1], 6), "tags": ob})
             a = attrait(tags)
             if a:
                 c = centre(o.get("geometry") or {})
@@ -272,13 +330,13 @@ def construire(code, nom, dossier):
     date = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     sortie = os.path.join(dossier, f"{code}.json.gz")
     with gzip.open(sortie, "wt", encoding="utf-8", compresslevel=9) as f:
-        json.dump({"pays": code, "version": date, "pois": pois}, f, ensure_ascii=False, separators=(",", ":"))
+        json.dump({"pays": code, "version": date, "pois": pois, "obstacles": obstacles}, f, ensure_ascii=False, separators=(",", ":"))
     compte = {}
     for p in pois:
         cat = categorie(p["tags"], p["id"][0])
         compte[cat] = compte.get(cat, 0) + 1
     meta = {"code": code, "fichier": f"{code}.json.gz", "taille": os.path.getsize(sortie),
-            "nb": len(pois), "categories": compte, "version": date}
+            "nb": len(pois), "categories": compte, "obstacles": len(obstacles), "version": date}
     with open(os.path.join(dossier, f"{code}.meta.json"), "w", encoding="utf-8") as f:
         json.dump(meta, f)
     print(f"{code} : {len(pois)} points, {meta['taille'] // 1024} Ko", flush=True)
