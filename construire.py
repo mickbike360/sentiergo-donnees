@@ -50,6 +50,8 @@ FILTRE = [
     "n/tourism=viewpoint",
     "nwr/natural=beach",
     "n/waterway=waterfall",
+    # Zones à faibles émissions (ZFE, Umweltzonen…) : annoncées dès l'aperçu du trajet.
+    "r/boundary=low_emission_zone",
 ]
 
 # Tags gardés : ce que l'appli affiche ou utilise pour trier.
@@ -322,6 +324,29 @@ def rues_porteuses(obstacles, pbf, dossier):
     print(f"{len(porteuses)}/{len(noeuds)} obstacles ponctuels rattachés à leur rue", flush=True)
 
 
+# Tags gardés pour une zone à faibles émissions.
+TAGS_ZONE = ("name", "name:fr", "website", "description", "start_date", "operator")
+
+
+def anneaux(geom):
+    """Contours d'un (multi)polygone, allégés : un point tous les 30 m environ, 5 décimales (~1 m)."""
+    g, c = geom.get("type"), geom.get("coordinates") or []
+    polys = [c] if g == "Polygon" else c if g == "MultiPolygon" else []
+    res = []
+    for poly in polys:
+        for ring in poly:
+            garde = []
+            for lon, lat in ring:
+                if garde:
+                    dl, dn = lat - garde[-1][0], (lon - garde[-1][1]) * math.cos(math.radians(lat))
+                    if (dl * dl + dn * dn) ** 0.5 * 111_000 < 30:
+                        continue
+                garde.append([round(lat, 5), round(lon, 5)])
+            if len(garde) >= 3:
+                res.append(garde)
+    return res
+
+
 def identifiant(brut):
     """Identifiant au format de l'appli : n123, w456, r789 (les « aires » osmium sont décodées)."""
     if brut[0] in "nwr":
@@ -356,7 +381,7 @@ def construire(code, nom, dossier):
               "--geometry-types=point,linestring,polygon", "--add-unique-id=type_id", filtre])
     os.remove(filtre)
 
-    pois, vus, attraits, obstacles, deja_obstacles = [], set(), [], [], set()
+    pois, vus, attraits, obstacles, deja_obstacles, zones = [], set(), [], [], set(), []
     with open(seq, encoding="utf-8") as f:
         for ligne in f:
             ligne = ligne.strip().lstrip("\x1e")
@@ -369,6 +394,11 @@ def construire(code, nom, dossier):
                 continue
             ident = identifiant(str(brut))
             tags = {k: str(v) for k, v in props.items() if not k.startswith("@")}
+            if tags.get("boundary") == "low_emission_zone":
+                a = anneaux(o.get("geometry") or {})
+                if a:
+                    zones.append({"id": ident, "tags": {k: v for k, v in tags.items() if k in TAGS_ZONE}, "anneaux": a})
+                continue
             ob = obstacle(tags, ident[0]) if ident[0] in "nw" and ident not in deja_obstacles else None
             if ob:
                 deja_obstacles.add(ident)
@@ -402,13 +432,14 @@ def construire(code, nom, dossier):
     date = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     sortie = os.path.join(dossier, f"{code}.json.gz")
     with gzip.open(sortie, "wt", encoding="utf-8", compresslevel=9) as f:
-        json.dump({"pays": code, "version": date, "pois": pois, "obstacles": obstacles}, f, ensure_ascii=False, separators=(",", ":"))
+        json.dump({"pays": code, "version": date, "pois": pois, "obstacles": obstacles, "zones": zones}, f,
+                  ensure_ascii=False, separators=(",", ":"))
     compte = {}
     for p in pois:
         cat = categorie(p["tags"], p["id"][0])
         compte[cat] = compte.get(cat, 0) + 1
     meta = {"code": code, "fichier": f"{code}.json.gz", "taille": os.path.getsize(sortie),
-            "nb": len(pois), "categories": compte, "obstacles": len(obstacles), "version": date}
+            "nb": len(pois), "categories": compte, "obstacles": len(obstacles), "zones": len(zones), "version": date}
     with open(os.path.join(dossier, f"{code}.meta.json"), "w", encoding="utf-8") as f:
         json.dump(meta, f)
     print(f"{code} : {len(pois)} points, {meta['taille'] // 1024} Ko", flush=True)
