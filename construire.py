@@ -242,6 +242,9 @@ def obstacle(t, type_osm):
     les tags à garder, ou None. Les pentes ne comptent que sur une route (highway).
     """
     garde = {}
+    # Une rue seulement : la hauteur d'un parking (zone dessinée) ne concerne pas la route.
+    if type_osm == "w" and not t.get("highway"):
+        return None
     h = nombre(t.get("maxheight") or t.get("maxheight:physical"))
     if h is not None and 0.5 < h < 4.5:
         for k in ("maxheight", "maxheight:physical"):
@@ -261,6 +264,9 @@ def obstacle(t, type_osm):
                 pct = math.tan(math.radians(n)) * 100 if "°" in inc else n
                 if abs(pct) >= 8:
                     garde["incline"] = inc
+    # Cabine de péage : l'appli ne la retient que sur notre voie.
+    if garde and t.get("barrier"):
+        garde["barrier"] = t["barrier"]
     return garde or None
 
 
@@ -299,7 +305,7 @@ def construire(code, nom, dossier):
               "--geometry-types=point,linestring,polygon", "--add-unique-id=type_id", filtre])
     os.remove(filtre)
 
-    pois, vus, attraits, obstacles = [], set(), [], []
+    pois, vus, attraits, obstacles, deja_obstacles = [], set(), [], [], set()
     with open(seq, encoding="utf-8") as f:
         for ligne in f:
             ligne = ligne.strip().lstrip("\x1e")
@@ -312,8 +318,9 @@ def construire(code, nom, dossier):
                 continue
             ident = identifiant(str(brut))
             tags = {k: str(v) for k, v in props.items() if not k.startswith("@")}
-            ob = obstacle(tags, ident[0]) if ident[0] in "nw" else None
+            ob = obstacle(tags, ident[0]) if ident[0] in "nw" and ident not in deja_obstacles else None
             if ob:
+                deja_obstacles.add(ident)
                 c = point_sur(o.get("geometry") or {})
                 if c:
                     obstacles.append({"id": ident, "lat": round(c[0], 6), "lon": round(c[1], 6), "tags": ob})
