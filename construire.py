@@ -61,7 +61,7 @@ TAGS_UTILES = {
     "contact:phone", "motorhome", "caravans", "caravan", "parking", "amenity", "tourism", "shop", "natural",
     "man_made", "fuel:lpg", "wheelchair",
     # Stations-service : enseigne, gazole, AdBlue, accès poids lourds (gabarit).
-    "brand", "fuel:diesel", "fuel:adblue", "hgv",
+    "brand", "fuel:diesel", "fuel:adblue", "hgv", "fuel:octane_95", "fuel:octane_98", "fuel:e85",
     # Ajoutés par beaux_spots : beau lieu à proximité.
     "sg:vue", "sg:vue_nom", "sg:vue_m",
     # Producteurs et marchés : produits, bio, type de distributeur.
@@ -96,6 +96,13 @@ def confirme_camping_car(t):
 PRODUITS_FERME = re.compile(r"eggs|milk|fruit|vegetable|potato|cheese|meat|honey|œuf|oeuf|lait|légume|legume|fromage|miel", re.I)
 
 
+def station_ouverte(t):
+    """Copie de Categorie.stationOuverte : ni dépôt privé, ni station fermée, ni réservée aux bateaux ou camions."""
+    return (t.get("access") not in ("private", "no", "permit", "delivery", "agricultural", "forestry")
+            and t.get("motorcar") != "no" and t.get("motor_vehicle") != "no" and t.get("vehicle") != "no"
+            and t.get("disused") != "yes" and t.get("abandoned") != "yes" and t.get("opening_hours") != "closed")
+
+
 def categorie(t, type_osm):
     """Copie de Categorie.depuisTags (Kotlin). Renvoie le nom de la catégorie, ou None."""
     amenity, tourism, shop = t.get("amenity"), t.get("tourism"), t.get("shop")
@@ -126,9 +133,9 @@ def categorie(t, type_osm):
         return "DOUCHE"
     if shop == "laundry" or amenity == "washing_machine":
         return "LAVERIE"
-    if amenity == "fuel" and t.get("fuel:lpg") == "yes":
+    if amenity == "fuel" and station_ouverte(t) and t.get("fuel:lpg") == "yes":
         return "GPL"
-    if amenity == "fuel":
+    if amenity == "fuel" and station_ouverte(t):
         return "STATION"
     if shop == "gas":
         return "GAZ"
