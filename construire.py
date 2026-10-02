@@ -286,7 +286,7 @@ def rues_porteuses(obstacles, pbf, dossier):
     with open(ids, "w") as f:
         f.write("\n".join(sorted(noeuds)))
     try:
-        executer(["osmium", "getparents", "--overwrite", "-I", ids, "-f", "opl", "-o", opl, pbf])
+        executer(["osmium", "getparents", "--overwrite", "-i", ids, "-f", "opl", "-o", opl, pbf])
     except (subprocess.CalledProcessError, FileNotFoundError) as e:
         print(f"getparents indisponible : {e}", flush=True)
         return
