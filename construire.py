@@ -17,6 +17,7 @@ import gzip
 import json
 import math
 import os
+import re
 import subprocess
 import sys
 import urllib.request
@@ -37,10 +38,11 @@ PAYS = [
 # Filtre osmium : tout ce qui peut devenir un point utile (le tri fin se fait ensuite).
 FILTRE = [
     "nwr/tourism=caravan_site,camp_site",
-    "nwr/amenity=sanitary_dump_station,water_point,drinking_water,parking,toilets,shower,washing_machine,fuel",
+    "nwr/amenity=sanitary_dump_station,water_point,drinking_water,parking,toilets,shower,washing_machine,fuel,marketplace",
+    "n/amenity=vending_machine",
     "nwr/man_made=water_tap",
     "nwr/natural=spring",
-    "nwr/shop=laundry,gas,supermarket",
+    "nwr/shop=laundry,gas,supermarket,farm",
     # Ce qui fait un beau spot : point de vue, plage, cascade (pas des points affichés, voir beaux_spots).
     "n/tourism=viewpoint",
     "nwr/natural=beach",
@@ -59,6 +61,8 @@ TAGS_UTILES = {
     "brand", "fuel:diesel", "fuel:adblue", "hgv",
     # Ajoutés par beaux_spots : beau lieu à proximité.
     "sg:vue", "sg:vue_nom", "sg:vue_m",
+    # Producteurs et marchés : produits, bio, type de distributeur.
+    "produce", "organic", "vending",
 }
 
 PARKING_EXCLUS = {"underground", "multi-storey", "rooftop", "street_side", "lane", "on_kerb", "half_on_kerb"}
@@ -74,6 +78,10 @@ def confirme_camping_car(t):
     if t.get("amenity") == "parking":
         return t.get("motorhome") in ("yes", "designated") and t.get("access") not in ("private", "no")
     return False
+
+
+# Copie de Categorie.PRODUITS_FERME : distributeurs à la ferme (œufs, lait, légumes…).
+PRODUITS_FERME = re.compile(r"eggs|milk|fruit|vegetable|potato|cheese|meat|honey|œuf|oeuf|lait|légume|legume|fromage|miel", re.I)
 
 
 def categorie(t, type_osm):
@@ -112,6 +120,12 @@ def categorie(t, type_osm):
         return "STATION"
     if shop == "gas":
         return "GAZ"
+    if shop == "farm":
+        return "PRODUCTEUR"
+    if amenity == "vending_machine" and PRODUITS_FERME.search(t.get("vending") or ""):
+        return "PRODUCTEUR"
+    if amenity == "marketplace":
+        return "MARCHE"
     if shop == "supermarket":
         return "COURSES"
     return None
