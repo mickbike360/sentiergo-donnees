@@ -65,9 +65,23 @@ PARKING_EXCLUS = {"underground", "multi-storey", "rooftop", "street_side", "lane
 ACCES_EXCLUS = {"private", "no", "customers", "permit", "delivery"}
 
 
+def confirme_camping_car(t):
+    """Copie de Categorie.confirmeCampingCar : aire, camping qui accepte, ou parking marqué autorisé."""
+    if t.get("tourism") == "caravan_site":
+        return True
+    if t.get("tourism") == "camp_site":
+        return t.get("motorhome") != "no" and t.get("caravans") != "no"
+    if t.get("amenity") == "parking":
+        return t.get("motorhome") in ("yes", "designated") and t.get("access") not in ("private", "no")
+    return False
+
+
 def categorie(t, type_osm):
     """Copie de Categorie.depuisTags (Kotlin). Renvoie le nom de la catégorie, ou None."""
     amenity, tourism, shop = t.get("amenity"), t.get("tourism"), t.get("shop")
+    if t.get("sg:vue") and confirme_camping_car(t):
+        # Beau spot : près d'une belle vue ET confirmé pour les camping-cars (jamais deviné).
+        return "SPOT"
     if tourism == "caravan_site":
         return "AIRE"
     if amenity == "sanitary_dump_station":
@@ -78,10 +92,6 @@ def categorie(t, type_osm):
         return "EAU"
     if t.get("natural") == "spring":
         return "SOURCE"
-    if amenity == "parking" and t.get("sg:vue") and t.get("motorhome") != "no" and t.get("caravan") != "no" \
-            and t.get("access") not in ACCES_EXCLUS and t.get("parking") not in PARKING_EXCLUS:
-        # Parking à deux pas d'un point de vue, d'une plage ou d'une cascade.
-        return "SPOT"
     if amenity == "parking" and t.get("motorhome") in ("yes", "designated"):
         return "PARKING"
     if (amenity == "parking" and type_osm != "n" and t.get("parking") not in PARKING_EXCLUS
