@@ -267,6 +267,8 @@ def obstacle(t, type_osm):
     # Cabine de péage : l'appli ne la retient que sur notre voie.
     if garde and t.get("barrier"):
         garde["barrier"] = t["barrier"]
+    if garde and t.get("amenity") == "parking_entrance":
+        garde["amenity"] = "parking_entrance"
     return garde or None
 
 
