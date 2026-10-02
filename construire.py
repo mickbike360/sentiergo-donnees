@@ -42,7 +42,7 @@ FILTRE = [
     "n/amenity=vending_machine",
     "nwr/man_made=water_tap",
     "nwr/natural=spring",
-    "nwr/shop=laundry,gas,supermarket,farm",
+    "nwr/shop=laundry,gas,supermarket,convenience,farm",
     # Ce qui fait un beau spot : point de vue, plage, cascade (pas des points affichés, voir beaux_spots).
     "n/tourism=viewpoint",
     "nwr/natural=beach",
@@ -126,7 +126,7 @@ def categorie(t, type_osm):
         return "PRODUCTEUR"
     if amenity == "marketplace":
         return "MARCHE"
-    if shop == "supermarket":
+    if shop in ("supermarket", "convenience"):
         return "COURSES"
     return None
 
