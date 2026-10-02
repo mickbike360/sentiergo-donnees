@@ -270,6 +270,49 @@ def obstacle(t, type_osm):
     return garde or None
 
 
+def rues_porteuses(obstacles, pbf, dossier):
+    """
+    Pour chaque obstacle ponctuel (portique, cabine de péage…), les rues qui le
+    portent (tag sg:voies). L'appli ne le signale que si le trajet emprunte l'une
+    d'elles : un portique de la rue voisine, à 3 ou 5 m, n'est plus une fausse alerte.
+    Sans « osmium getparents » (version ancienne), rien n'est ajouté : l'appli garde
+    alors sa règle de proximité.
+    """
+    noeuds = {o["id"] for o in obstacles if o["id"].startswith("n")}
+    if not noeuds:
+        return
+    ids = os.path.join(dossier, "noeuds.txt")
+    opl = os.path.join(dossier, "parents.opl")
+    with open(ids, "w") as f:
+        f.write("\n".join(sorted(noeuds)))
+    try:
+        executer(["osmium", "getparents", "--overwrite", "-I", ids, "-f", "opl", "-o", opl, pbf])
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        print(f"getparents indisponible : {e}", flush=True)
+        return
+    finally:
+        os.remove(ids)
+    porteuses = {}
+    with open(opl, encoding="utf-8") as f:
+        for ligne in f:
+            champs = ligne.split()
+            if not champs or not champs[0].startswith("w"):
+                continue
+            tags = next((c[1:] for c in champs if c.startswith("T")), "")
+            if "highway=" not in tags:
+                continue
+            refs = next((c[1:] for c in champs if c.startswith("N")), "")
+            for r in refs.split(","):
+                if r in noeuds:
+                    porteuses.setdefault(r, []).append(champs[0][1:])
+    os.remove(opl)
+    for o in obstacles:
+        v = porteuses.get(o["id"])
+        if v:
+            o["tags"]["sg:voies"] = ";".join(v)
+    print(f"{len(porteuses)}/{len(noeuds)} obstacles ponctuels rattachés à leur rue", flush=True)
+
+
 def identifiant(brut):
     """Identifiant au format de l'appli : n123, w456, r789 (les « aires » osmium sont décodées)."""
     if brut[0] in "nwr":
@@ -300,7 +343,6 @@ def construire(code, nom, dossier):
             if essai == 5:
                 raise
     executer(["osmium", "tags-filter", "--overwrite", "-o", filtre, pbf] + FILTRE)
-    os.remove(pbf)
     executer(["osmium", "export", "--overwrite", "-f", "geojsonseq", "-o", seq,
               "--geometry-types=point,linestring,polygon", "--add-unique-id=type_id", filtre])
     os.remove(filtre)
@@ -343,6 +385,8 @@ def construire(code, nom, dossier):
             pois.append({"id": ident, "lat": c[0], "lon": c[1],
                          "tags": {k: v for k, v in tags.items() if k in TAGS_UTILES}})
     os.remove(seq)
+    rues_porteuses(obstacles, pbf, dossier)
+    os.remove(pbf)
     nb_spots = beaux_spots(pois, attraits)
     print(f"{code} : {len(attraits)} beaux lieux, {nb_spots} stationnements à proximité", flush=True)
 
