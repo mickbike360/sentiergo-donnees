@@ -344,6 +344,8 @@ def bike_parks(pois, remontees, domaines, villages=None):
 
 # Pistes VTT à moins de 1,5 km d'une gare de remontée : desservies par elle.
 RAYON_PISTES_M = 1_500.0
+# Remontées aux pistes communes, gares du bas à moins de 5 km : le même bike park.
+FUSION_PISTES_M = 5_000.0
 # Au moins 3 pistes VTT différentes près des remontées : un bike park.
 PISTES_MIN = 3
 
@@ -387,7 +389,9 @@ def bike_parks_pistes(pois, telesieges, pistes, domaines, villages=None):
     # Groupes qui partagent des pistes : le même bike park.
     fusion = []
     for g in [g for g in groupes if g[1]]:
-        lies = [f for f in fusion if f[1] & g[1]]
+        # Pistes communes ET gares du bas à moins de 5 km : Leogang et Saalbach partagent des
+        # pistes par le sommet mais restent deux bike parks, de part et d'autre de la montagne.
+        lies = [f for f in fusion if f[1] & g[1] and any(metres(a, b) <= FUSION_PISTES_M for a in f[0] for b in g[0])]
         n = g
         for f in lies:
             n = (n[0] + f[0], n[1] | f[1])
