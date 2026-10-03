@@ -39,7 +39,7 @@ PAYS = [
 # Filtre osmium : tout ce qui peut devenir un point utile (le tri fin se fait ensuite).
 FILTRE = [
     "nwr/tourism=caravan_site,camp_site",
-    "nwr/amenity=sanitary_dump_station,water_point,drinking_water,parking,toilets,shower,washing_machine,fuel,marketplace",
+    "nwr/amenity=sanitary_dump_station,water_point,drinking_water,parking,toilets,shower,washing_machine,fuel,marketplace,restaurant",
     "n/amenity=vending_machine",
     "nwr/man_made=water_tap",
     "nwr/natural=spring",
@@ -73,7 +73,7 @@ TAGS_UTILES = {
     "contact:phone", "motorhome", "caravans", "caravan", "parking", "amenity", "tourism", "shop", "natural",
     "man_made", "fuel:lpg", "wheelchair",
     # Randonnée, VTT, ski, cols : de quoi les reconnaître dans l'appli, et l'altitude.
-    "highway", "leisure", "sport", "landuse", "mountain_pass", "ele", "sg:velos", "sg:velos_ete", "sg:pres", "sg:pistes",
+    "highway", "leisure", "sport", "landuse", "mountain_pass", "ele", "cuisine", "sg:velos", "sg:velos_ete", "sg:pres", "sg:pistes",
     # Stations-service : enseigne, gazole, AdBlue, accès poids lourds (gabarit).
     "brand", "fuel:diesel", "fuel:adblue", "hgv", "fuel:octane_95", "fuel:octane_98", "fuel:e85",
     # Ajoutés par beaux_spots : beau lieu à proximité.
@@ -161,6 +161,8 @@ def categorie(t, type_osm):
         return "MARCHE"
     if shop in ("supermarket", "convenience"):
         return "COURSES"
+    if amenity == "restaurant" and t.get("name"):
+        return "RESTAURANT"
     if amenity == "hospital" or t.get("healthcare") == "hospital":
         return "HOPITAL"
     if t.get("highway") == "trailhead":
