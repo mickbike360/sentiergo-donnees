@@ -344,7 +344,7 @@ def bike_parks(pois, remontees, domaines, villages=None):
 
 # Pistes VTT à moins de 1,5 km d'une gare de remontée : desservies par elle.
 RAYON_PISTES_M = 1_500.0
-# Remontées aux pistes communes, gares du bas à moins de 5 km : le même bike park.
+# Deux bike parks repérés par leurs pistes : au moins 5 km entre leurs gares du bas.
 FUSION_PISTES_M = 5_000.0
 # Au moins 3 pistes VTT différentes près des remontées : un bike park.
 PISTES_MIN = 3
@@ -386,22 +386,19 @@ def bike_parks_pistes(pois, telesieges, pistes, domaines, villages=None):
             n = (n[0] + g[0], n[1] | g[1])
             groupes.remove(g)
         groupes.append(n)
-    # Groupes qui partagent des pistes : le même bike park.
-    fusion = []
-    for g in [g for g in groupes if g[1]]:
-        # Pistes communes ET gares du bas à moins de 5 km : Leogang et Saalbach partagent des
-        # pistes par le sommet mais restent deux bike parks, de part et d'autre de la montagne.
-        lies = [f for f in fusion if f[1] & g[1] and any(metres(a, b) <= FUSION_PISTES_M for a in f[0] for b in g[0])]
-        n = g
-        for f in lies:
-            n = (n[0] + f[0], n[1] | f[1])
-            fusion.remove(f)
-        fusion.append(n)
+    # Un bike park par groupe de remontées qui a ses pistes, à plus de 5 km d'un autre : au village
+    # d'abord, puis le plus de pistes (Vallnord : la télécabine de La Massana ; Leogang et Saalbach :
+    # deux points, même si leurs pistes se rejoignent au sommet).
+    def au_village(g):
+        return bool(villages) and any(villages.distance(r) <= GARE_AU_VILLAGE_M for r in g[0])
+    retenus = []
+    for g in sorted([g for g in groupes if len(g[1]) >= PISTES_MIN], key=lambda g: (not au_village(g), -len(g[1]))):
+        if any(metres(a, b) <= FUSION_PISTES_M for a in g[0] for f in retenus for b in f[0]):
+            continue
+        retenus.append(g)
     existants = [p for p in pois if categorie(p["tags"], p["id"][0]) == "BIKE_PARK"]
     ajoutes = 0
-    for lifts, noms in fusion:
-        if len(noms) < PISTES_MIN:
-            continue
+    for lifts, noms in retenus:
         # Nombre affiché : les pistes nommées (une piste sans nom est souvent faite de plusieurs tronçons).
         nommees = len([n for n in noms if not n.startswith("#")]) or len(noms)
         deja = [p for p in existants if any(metres((p["lat"], p["lon"]), r) <= RAYON_DOMAINE_M for r in lifts)]
@@ -410,8 +407,8 @@ def bike_parks_pistes(pois, telesieges, pistes, domaines, villages=None):
                 p["tags"]["sg:pistes"] = str(nommees)
             continue
         cabines = [r for r in lifts if r[3] in ("gondola", "cable_car", "mixed_lift")]
-        au_village = [r for r in (cabines or lifts) if villages and villages.distance(r) <= GARE_AU_VILLAGE_M]
-        bas = max(au_village or cabines or lifts, key=lambda r: len(autour(r)))
+        gares_village = [r for r in (cabines or lifts) if villages and villages.distance(r) <= GARE_AU_VILLAGE_M]
+        bas = max(gares_village or cabines or lifts, key=lambda r: len(autour(r)))
         nom = next((d[0] for d in domaines for a in d[1]
                     if any(dans_anneau(r[0], r[1], a) or dans_anneau(r[5], r[6], a) for r in lifts)), None)
         tags = {"sg:pistes": str(nommees)}
