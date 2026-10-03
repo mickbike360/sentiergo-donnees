@@ -439,6 +439,13 @@ def pres_de(pois, lieux):
         if not proches:
             continue
         l = min(proches, key=lambda l: metres(l, (p["lat"], p["lon"])))
+        # Un village cité dans le nom du domaine, à 3 km de plus au plus, passe avant le hameau le
+        # plus proche (« Skicircus Saalbach-Hinterglemm Leogang Fieberbrunn » : Leogang, pas Rain).
+        nom_p = simple(p["tags"].get("name") or "")
+        cites = [x for x in proches if len(x[2]) >= 3 and simple(x[2]) in nom_p
+                 and metres(x, (p["lat"], p["lon"])) <= min(RAYON_PRES_M, metres(l, (p["lat"], p["lon"])) + 3_000)]
+        if cites:
+            l = min(cites, key=lambda x: metres(x, (p["lat"], p["lon"])))
         # Le nom du lieu est déjà celui du village (« Morzine » près de Morzine) : rien à ajouter.
         if metres(l, (p["lat"], p["lon"])) <= RAYON_PRES_M and l[2] not in (p["tags"].get("name"), p["tags"].get("name:fr")):
             p["tags"]["sg:pres"] = l[2]
