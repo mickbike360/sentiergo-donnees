@@ -46,8 +46,9 @@ FILTRE = [
     "nwr/amenity=hospital", "nwr/healthcare=hospital",
     # Randonnée, VTT, ski, cols.
     "nwr/highway=trailhead", "nwr/leisure=bike_park", "nwr/sport=mtb", "nwr/landuse=winter_sports", "n/mountain_pass=yes",
-    # Remontées qui prennent les vélos l'été : la plupart des bike parks de station ne sont notés que comme ça.
-    "w/aerialway:bicycle=yes,summer,designated,yes|summer",
+    # Remontées : le pied des pistes d'une station de ski, et celles qui prennent les vélos l'été
+    # (la plupart des bike parks de station ne sont notés que comme ça).
+    "w/aerialway=gondola,chair_lift,cable_car,mixed_lift,drag_lift,t-bar,j-bar,platter,rope_tow,magic_carpet",
     # Obstacles pour un camping-car (passages bas, étroits, poids, fortes pentes) : alertes sans réseau.
     "w/maxheight", "w/maxheight:physical", "n/maxheight", "w/maxwidth", "w/maxweight", "w/incline",
     # Ce qui fait un beau spot : point de vue, plage, cascade (pas des points affichés, voir beaux_spots).
@@ -216,6 +217,10 @@ def attrait(t):
 
 # Remontées mécaniques qui transportent des vélos (le tapis ou le téléski, non : on n'y monte pas avec un vélo).
 REMONTEES_VELO = {"gondola", "chair_lift", "cable_car", "mixed_lift"}
+# Remontées dont la gare du bas peut servir de pied des pistes.
+GARES = {"gondola", "chair_lift", "cable_car", "mixed_lift", "drag_lift", "t-bar", "j-bar", "platter", "rope_tow", "magic_carpet"}
+# Pied des pistes : la gare du bas qui a le plus d'autres gares du bas à moins de 1 km.
+RAYON_PIED_M = 1_000.0
 # Deux remontées dont les gares du bas sont à moins de 1,2 km : la même station. Plus large, les
 # remontées s'enchaînent d'un village à l'autre (Morzine, Les Gets, Châtel : un seul point).
 RAYON_DOMAINE_M = 1_200.0
@@ -311,6 +316,34 @@ def bike_parks(pois, remontees, domaines):
             gardes.append(p)
     pois[:] = [p for p in pois if id(p) not in retires]
     return ajoutes
+
+
+def pied_des_pistes(pois, gares, domaines):
+    """
+    Une station de ski placée au centre de son domaine tombe en pleine montagne (un
+    itinéraire y mènerait n'importe où) : elle est ramenée au pied des pistes, la gare
+    du bas de remontée du domaine autour de laquelle il y en a le plus (le village,
+    le front de neige). Sans remontée connue dans le domaine, le point ne bouge pas.
+    Renvoie le nombre de stations déplacées.
+    """
+    par_id = {p["id"]: p for p in pois}
+    n = 0
+    for nom, anneaux_d, ident in domaines:
+        p = par_id.get(ident)
+        if p is None:
+            continue
+        lats = [q[1] for a in anneaux_d for q in a]
+        lons = [q[0] for a in anneaux_d for q in a]
+        dedans = [g for g in gares
+                  if min(lats) <= g[0] <= max(lats) and min(lons) <= g[1] <= max(lons)
+                  and any(dans_anneau(g[0], g[1], a) for a in anneaux_d)]
+        if not dedans:
+            continue
+        centre_d = (p["lat"], p["lon"])
+        pied = max(dedans, key=lambda g: (sum(1 for h in dedans if metres(g, h) <= RAYON_PIED_M), -metres(g, centre_d)))
+        p["lat"], p["lon"] = round(pied[0], 6), round(pied[1], 6)
+        n += 1
+    return n
 
 
 # Rayon autour d'un lieu de stationnement : un beau lieu à moins de 300 m (quelques minutes à pied).
@@ -496,7 +529,7 @@ def construire(code, nom, dossier):
     os.remove(filtre)
 
     pois, vus, attraits, obstacles, deja_obstacles, zones = [], set(), [], [], set(), []
-    remontees, domaines = [], []
+    remontees, domaines, gares = [], [], []
     with open(seq, encoding="utf-8") as f:
         for ligne in f:
             ligne = ligne.strip().lstrip("\x1e")
@@ -514,19 +547,21 @@ def construire(code, nom, dossier):
                 if a:
                     zones.append({"id": ident, "tags": {k: v for k, v in tags.items() if k in TAGS_ZONE}, "anneaux": a})
                 continue
-            if tags.get("aerialway") in REMONTEES_VELO and tags.get("aerialway:bicycle") in ("yes", "summer", "designated", "yes|summer"):
+            if tags.get("aerialway") in GARES:
                 g = o.get("geometry") or {}
                 if g.get("type") == "LineString" and g.get("coordinates"):
                     # Une remontée est tracée de bas en haut : le premier point est la gare du bas.
                     lon0, lat0 = g["coordinates"][0][:2]
                     lon1, lat1 = g["coordinates"][-1][:2]
-                    ete = "summer" if tags["aerialway:bicycle"] == "summer" else "yes"
-                    remontees.append((lat0, lon0, tags.get("name:fr") or tags.get("name"), ete, ident, lat1, lon1))
+                    gares.append((lat0, lon0))
+                    if tags["aerialway"] in REMONTEES_VELO and tags.get("aerialway:bicycle") in ("yes", "summer", "designated", "yes|summer"):
+                        ete = "summer" if tags["aerialway:bicycle"] == "summer" else "yes"
+                        remontees.append((lat0, lon0, tags.get("name:fr") or tags.get("name"), ete, ident, lat1, lon1))
                 continue
             if tags.get("landuse") == "winter_sports" and tags.get("name"):
                 a = contours(o.get("geometry") or {})
                 if a:
-                    domaines.append((tags.get("name:fr") or tags["name"], a))
+                    domaines.append((tags.get("name:fr") or tags["name"], a, ident))
             ob = obstacle(tags, ident[0]) if ident[0] in "nw" and ident not in deja_obstacles else None
             if ob:
                 deja_obstacles.add(ident)
@@ -557,6 +592,8 @@ def construire(code, nom, dossier):
     nb_spots = beaux_spots(pois, attraits)
     nb_velos = bike_parks(pois, remontees, domaines)
     print(f"{code} : {len(remontees)} remontées avec vélos, {nb_velos} bike parks ajoutés", flush=True)
+    nb_pieds = pied_des_pistes(pois, gares, domaines)
+    print(f"{code} : {nb_pieds} stations de ski sur {len(domaines)} ramenées au pied des pistes", flush=True)
     print(f"{code} : {len(attraits)} beaux lieux, {nb_spots} stationnements à proximité", flush=True)
 
     date = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
