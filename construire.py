@@ -48,6 +48,8 @@ FILTRE = [
     "nwr/highway=trailhead", "nwr/leisure=bike_park", "nwr/sport=mtb", "nwr/landuse=winter_sports", "n/mountain_pass=yes",
     # Remontées : le pied des pistes d'une station de ski, et celles qui prennent les vélos l'été
     # (la plupart des bike parks de station ne sont notés que comme ça).
+    # Villes et villages : « près de Morzine » pour une station ou un bike park au nom de domaine.
+    "n/place=city,town,village",
     "w/aerialway=gondola,chair_lift,cable_car,mixed_lift,drag_lift,t-bar,j-bar,platter,rope_tow,magic_carpet",
     # Obstacles pour un camping-car (passages bas, étroits, poids, fortes pentes) : alertes sans réseau.
     "w/maxheight", "w/maxheight:physical", "n/maxheight", "w/maxwidth", "w/maxweight", "w/incline",
@@ -68,7 +70,7 @@ TAGS_UTILES = {
     "contact:phone", "motorhome", "caravans", "caravan", "parking", "amenity", "tourism", "shop", "natural",
     "man_made", "fuel:lpg", "wheelchair",
     # Randonnée, VTT, ski, cols : de quoi les reconnaître dans l'appli, et l'altitude.
-    "highway", "leisure", "sport", "landuse", "mountain_pass", "ele", "sg:velos", "sg:velos_ete",
+    "highway", "leisure", "sport", "landuse", "mountain_pass", "ele", "sg:velos", "sg:velos_ete", "sg:pres",
     # Stations-service : enseigne, gazole, AdBlue, accès poids lourds (gabarit).
     "brand", "fuel:diesel", "fuel:adblue", "hgv", "fuel:octane_95", "fuel:octane_98", "fuel:e85",
     # Ajoutés par beaux_spots : beau lieu à proximité.
@@ -318,6 +320,32 @@ def bike_parks(pois, remontees, domaines):
     return ajoutes
 
 
+# Village le plus proche d'une station ou d'un bike park : à moins de 8 km.
+RAYON_PRES_M = 8_000.0
+
+
+def pres_de(pois, lieux):
+    """Tag sg:pres (nom du village, de la ville la plus proche) des stations de ski et bike parks."""
+    grille = {}
+    for l in lieux:
+        grille.setdefault((int(l[0] * 10 // 1), int(l[1] * 10 // 1)), []).append(l)
+    n = 0
+    for p in pois:
+        if categorie(p["tags"], p["id"][0]) not in ("SKI", "BIKE_PARK"):
+            continue
+        gi, gj = int(p["lat"] * 10 // 1), int(p["lon"] * 10 // 1)
+        # Cases de 0,1° : 11 km en latitude, moins en longitude vers le nord (3,8 km en Laponie).
+        proches = [l for di in (-1, 0, 1) for dj in range(-3, 4) for l in grille.get((gi + di, gj + dj), ())]
+        if not proches:
+            continue
+        l = min(proches, key=lambda l: metres(l, (p["lat"], p["lon"])))
+        # Le nom du lieu est déjà celui du village (« Morzine » près de Morzine) : rien à ajouter.
+        if metres(l, (p["lat"], p["lon"])) <= RAYON_PRES_M and l[2] not in (p["tags"].get("name"), p["tags"].get("name:fr")):
+            p["tags"]["sg:pres"] = l[2]
+            n += 1
+    return n
+
+
 def pied_des_pistes(pois, gares, domaines):
     """
     Une station de ski placée au centre de son domaine tombe en pleine montagne (un
@@ -529,7 +557,7 @@ def construire(code, nom, dossier):
     os.remove(filtre)
 
     pois, vus, attraits, obstacles, deja_obstacles, zones = [], set(), [], [], set(), []
-    remontees, domaines, gares = [], [], []
+    remontees, domaines, gares, lieux = [], [], [], []
     with open(seq, encoding="utf-8") as f:
         for ligne in f:
             ligne = ligne.strip().lstrip("\x1e")
@@ -547,6 +575,12 @@ def construire(code, nom, dossier):
                 if a:
                     zones.append({"id": ident, "tags": {k: v for k, v in tags.items() if k in TAGS_ZONE}, "anneaux": a})
                 continue
+            if tags.get("place") in ("city", "town", "village") and ident[0] == "n":
+                g = o.get("geometry") or {}
+                if g.get("type") == "Point" and (tags.get("name:fr") or tags.get("name")):
+                    lieux.append((g["coordinates"][1], g["coordinates"][0], tags.get("name:fr") or tags["name"]))
+                if categorie(tags, ident[0]) is None:
+                    continue
             if tags.get("aerialway") in GARES:
                 g = o.get("geometry") or {}
                 if g.get("type") == "LineString" and g.get("coordinates"):
@@ -594,6 +628,7 @@ def construire(code, nom, dossier):
     print(f"{code} : {len(remontees)} remontées avec vélos, {nb_velos} bike parks ajoutés", flush=True)
     nb_pieds = pied_des_pistes(pois, gares, domaines)
     print(f"{code} : {nb_pieds} stations de ski sur {len(domaines)} ramenées au pied des pistes", flush=True)
+    print(f"{code} : {pres_de(pois, lieux)} stations et bike parks situés près d'un village", flush=True)
     print(f"{code} : {len(attraits)} beaux lieux, {nb_spots} stationnements à proximité", flush=True)
 
     date = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
