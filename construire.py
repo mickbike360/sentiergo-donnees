@@ -462,16 +462,23 @@ def fusion_par_village(pois):
     groupes = {}
     for p in pois:
         t = p["tags"]
-        if t.get("sg:velos") and not t.get("leisure") and t.get("sg:pres") and t.get("name"):
+        if (t.get("sg:velos") or t.get("sg:pistes")) and not t.get("leisure") and t.get("sg:pres") and t.get("name"):
             groupes.setdefault((t["name"], t["sg:pres"]), []).append(p)
     retires = set()
     for g in groupes.values():
         if len(g) < 2:
             continue
-        garde = max(g, key=lambda p: int(p["tags"]["sg:velos"]))
-        garde["tags"]["sg:velos"] = str(sum(int(p["tags"]["sg:velos"]) for p in g))
-        if any(p["tags"].get("sg:velos_ete") != "yes" for p in g):
-            garde["tags"].pop("sg:velos_ete", None)
+        # Celui qui a le plus de remontées à vélo, puis de pistes ; il reçoit le total des remontées
+        # et le plus grand nombre de pistes (les pistes de l'un sont souvent celles de l'autre).
+        garde = max(g, key=lambda p: (int(p["tags"].get("sg:velos", "0")), int(p["tags"].get("sg:pistes", "0"))))
+        velos = sum(int(p["tags"].get("sg:velos", "0")) for p in g)
+        pistes = max(int(p["tags"].get("sg:pistes", "0")) for p in g)
+        if velos:
+            garde["tags"]["sg:velos"] = str(velos)
+            if any(p["tags"].get("sg:velos") and p["tags"].get("sg:velos_ete") != "yes" for p in g):
+                garde["tags"].pop("sg:velos_ete", None)
+        if pistes:
+            garde["tags"]["sg:pistes"] = str(pistes)
         retires.update(id(p) for p in g if p is not garde)
     pois[:] = [p for p in pois if id(p) not in retires]
     return len(retires)
