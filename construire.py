@@ -346,6 +346,30 @@ def pres_de(pois, lieux):
     return n
 
 
+def fusion_par_village(pois):
+    """
+    Bike parks de station au même nom de domaine et près du même village (L'Alpe d'Huez
+    a des gares à plus de 1,2 km l'une de l'autre) : un seul point, celui qui a le plus
+    de remontées, avec leur total. Rend le nombre de points retirés.
+    """
+    groupes = {}
+    for p in pois:
+        t = p["tags"]
+        if t.get("sg:velos") and not t.get("leisure") and t.get("sg:pres") and t.get("name"):
+            groupes.setdefault((t["name"], t["sg:pres"]), []).append(p)
+    retires = set()
+    for g in groupes.values():
+        if len(g) < 2:
+            continue
+        garde = max(g, key=lambda p: int(p["tags"]["sg:velos"]))
+        garde["tags"]["sg:velos"] = str(sum(int(p["tags"]["sg:velos"]) for p in g))
+        if any(p["tags"].get("sg:velos_ete") != "yes" for p in g):
+            garde["tags"].pop("sg:velos_ete", None)
+        retires.update(id(p) for p in g if p is not garde)
+    pois[:] = [p for p in pois if id(p) not in retires]
+    return len(retires)
+
+
 def pied_des_pistes(pois, gares, domaines):
     """
     Une station de ski placée au centre de son domaine tombe en pleine montagne (un
@@ -629,6 +653,7 @@ def construire(code, nom, dossier):
     nb_pieds = pied_des_pistes(pois, gares, domaines)
     print(f"{code} : {nb_pieds} stations de ski sur {len(domaines)} ramenées au pied des pistes", flush=True)
     print(f"{code} : {pres_de(pois, lieux)} stations et bike parks situés près d'un village", flush=True)
+    print(f"{code} : {fusion_par_village(pois)} bike parks fusionnés (même domaine, même village)", flush=True)
     print(f"{code} : {len(attraits)} beaux lieux, {nb_spots} stationnements à proximité", flush=True)
 
     date = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
