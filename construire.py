@@ -20,6 +20,7 @@ import os
 import re
 import subprocess
 import sys
+import unicodedata
 import urllib.request
 
 # Code ISO → nom de l'extrait Geofabrik (europe/<nom>-latest.osm.pbf).
@@ -50,6 +51,8 @@ FILTRE = [
     # (la plupart des bike parks de station ne sont notés que comme ça).
     # Villes et villages : « près de Morzine » pour une station ou un bike park au nom de domaine.
     "n/place=city,town,village",
+    # Pistes VTT (difficulté notée) : réservées aux vélos près des remontées, c'est un bike park.
+    "w/mtb:scale",
     "w/aerialway=gondola,chair_lift,cable_car,mixed_lift,drag_lift,t-bar,j-bar,platter,rope_tow,magic_carpet",
     # Obstacles pour un camping-car (passages bas, étroits, poids, fortes pentes) : alertes sans réseau.
     "w/maxheight", "w/maxheight:physical", "n/maxheight", "w/maxwidth", "w/maxweight", "w/incline",
@@ -70,7 +73,7 @@ TAGS_UTILES = {
     "contact:phone", "motorhome", "caravans", "caravan", "parking", "amenity", "tourism", "shop", "natural",
     "man_made", "fuel:lpg", "wheelchair",
     # Randonnée, VTT, ski, cols : de quoi les reconnaître dans l'appli, et l'altitude.
-    "highway", "leisure", "sport", "landuse", "mountain_pass", "ele", "sg:velos", "sg:velos_ete", "sg:pres",
+    "highway", "leisure", "sport", "landuse", "mountain_pass", "ele", "sg:velos", "sg:velos_ete", "sg:pres", "sg:pistes",
     # Stations-service : enseigne, gazole, AdBlue, accès poids lourds (gabarit).
     "brand", "fuel:diesel", "fuel:adblue", "hgv", "fuel:octane_95", "fuel:octane_98", "fuel:e85",
     # Ajoutés par beaux_spots : beau lieu à proximité.
@@ -162,7 +165,7 @@ def categorie(t, type_osm):
         return "HOPITAL"
     if t.get("highway") == "trailhead":
         return "RANDO"
-    if t.get("sg:velos") or t.get("leisure") == "bike_park" or ("mtb" in (t.get("sport") or "").split(";")
+    if t.get("sg:velos") or t.get("sg:pistes") or t.get("leisure") == "bike_park" or ("mtb" in (t.get("sport") or "").split(";")
                                           and t.get("leisure") in ("sports_centre", "park", "pitch", "track")):
         return "BIKE_PARK"
     if t.get("landuse") == "winter_sports" and t.get("name"):
@@ -317,6 +320,82 @@ def bike_parks(pois, remontees, domaines):
         else:
             gardes.append(p)
     pois[:] = [p for p in pois if id(p) not in retires]
+    return ajoutes
+
+
+# Pistes VTT à moins de 1,5 km d'une gare de remontée : desservies par elle.
+RAYON_PISTES_M = 1_500.0
+# Au moins 3 pistes VTT différentes près des remontées : un bike park.
+PISTES_MIN = 3
+
+
+def simple(nom):
+    """Nom sans accents ni majuscules : « Commençal Superior » = « Commencal superior »."""
+    return "".join(ch for ch in unicodedata.normalize("NFD", nom) if unicodedata.category(ch) != "Mn").lower().strip()
+
+
+def piste_vtt(t):
+    """Une piste VTT : chemin avec une difficulté VTT, réservé aux vélos (pas un sentier de randonnée)."""
+    return (t.get("highway") in ("path", "track", "cycleway", "bridleway") and t.get("mtb:scale") is not None
+            and (t.get("bicycle") == "designated" or t.get("mtb") == "designated"))
+
+
+def bike_parks_pistes(pois, telesieges, pistes, domaines):
+    """
+    Bike parks que rien ne nomme ainsi (Vallnord, Châtel…) : des remontées (gares du
+    bas à moins de 1,2 km) avec au moins 3 pistes VTT réservées aux vélos à moins de
+    1,5 km d'une de leurs gares. Les groupes qui partagent des pistes ne font qu'un.
+    Le point : la gare du bas d'une télécabine s'il y en a une (le village), sinon
+    celle qui a le plus de pistes autour. Un bike park déjà connu tout près reçoit le
+    nombre de pistes. Rend le nombre de bike parks ajoutés.
+    """
+    grille = {}
+    for p in pistes:
+        grille.setdefault((int(p[0] * 50 // 1), int(p[1] * 50 // 1)), []).append(p)
+
+    def autour(pt):
+        gi, gj = int(pt[0] * 50 // 1), int(pt[1] * 50 // 1)
+        return {p[2] for di in (-1, 0, 1) for dj in range(-2, 3) for p in grille.get((gi + di, gj + dj), ())
+                if metres(p, pt) <= RAYON_PISTES_M}
+    groupes = []
+    for r in telesieges:
+        proches = [g for g in groupes if any(metres(r, x) <= RAYON_DOMAINE_M for x in g[0])]
+        n = ([r], autour(r) | autour((r[5], r[6])))
+        for g in proches:
+            n = (n[0] + g[0], n[1] | g[1])
+            groupes.remove(g)
+        groupes.append(n)
+    # Groupes qui partagent des pistes : le même bike park.
+    fusion = []
+    for g in [g for g in groupes if g[1]]:
+        lies = [f for f in fusion if f[1] & g[1]]
+        n = g
+        for f in lies:
+            n = (n[0] + f[0], n[1] | f[1])
+            fusion.remove(f)
+        fusion.append(n)
+    existants = [p for p in pois if categorie(p["tags"], p["id"][0]) == "BIKE_PARK"]
+    ajoutes = 0
+    for lifts, noms in fusion:
+        if len(noms) < PISTES_MIN:
+            continue
+        # Nombre affiché : les pistes nommées (une piste sans nom est souvent faite de plusieurs tronçons).
+        nommees = len([n for n in noms if not n.startswith("#")]) or len(noms)
+        deja = [p for p in existants if any(metres((p["lat"], p["lon"]), r) <= RAYON_DOMAINE_M for r in lifts)]
+        if deja:
+            for p in deja:
+                p["tags"]["sg:pistes"] = str(nommees)
+            continue
+        cabines = [r for r in lifts if r[3] in ("gondola", "cable_car", "mixed_lift")]
+        bas = max(cabines or lifts, key=lambda r: len(autour(r)))
+        nom = next((d[0] for d in domaines for a in d[1]
+                    if any(dans_anneau(r[0], r[1], a) or dans_anneau(r[5], r[6], a) for r in lifts)), None)
+        tags = {"sg:pistes": str(nommees)}
+        if nom:
+            tags["name"] = nom
+        pois.append({"id": bas[4], "lat": round(bas[0], 6), "lon": round(bas[1], 6), "tags": tags})
+        existants.append(pois[-1])
+        ajoutes += 1
     return ajoutes
 
 
@@ -581,7 +660,7 @@ def construire(code, nom, dossier):
     os.remove(filtre)
 
     pois, vus, attraits, obstacles, deja_obstacles, zones = [], set(), [], [], set(), []
-    remontees, domaines, gares, lieux = [], [], [], []
+    remontees, domaines, gares, lieux, telesieges, pistes = [], [], [], [], [], []
     with open(seq, encoding="utf-8") as f:
         for ligne in f:
             ligne = ligne.strip().lstrip("\x1e")
@@ -605,6 +684,11 @@ def construire(code, nom, dossier):
                     lieux.append((g["coordinates"][1], g["coordinates"][0], tags.get("name:fr") or tags["name"]))
                 if categorie(tags, ident[0]) is None:
                     continue
+            if piste_vtt(tags):
+                c = point_sur(o.get("geometry") or {})
+                if c:
+                    # Sans nom : chaque tronçon compte à part (identifiant), pour le seuil seulement.
+                    pistes.append((c[0], c[1], simple(tags["name"]) if tags.get("name") else "#" + ident))
             if tags.get("aerialway") in GARES:
                 g = o.get("geometry") or {}
                 if g.get("type") == "LineString" and g.get("coordinates"):
@@ -612,6 +696,8 @@ def construire(code, nom, dossier):
                     lon0, lat0 = g["coordinates"][0][:2]
                     lon1, lat1 = g["coordinates"][-1][:2]
                     gares.append((lat0, lon0))
+                    if tags["aerialway"] in REMONTEES_VELO:
+                        telesieges.append((lat0, lon0, tags.get("name"), tags["aerialway"], ident, lat1, lon1))
                     if tags["aerialway"] in REMONTEES_VELO and tags.get("aerialway:bicycle") in ("yes", "summer", "designated", "yes|summer"):
                         ete = "summer" if tags["aerialway:bicycle"] == "summer" else "yes"
                         remontees.append((lat0, lon0, tags.get("name:fr") or tags.get("name"), ete, ident, lat1, lon1))
@@ -650,6 +736,8 @@ def construire(code, nom, dossier):
     nb_spots = beaux_spots(pois, attraits)
     nb_velos = bike_parks(pois, remontees, domaines)
     print(f"{code} : {len(remontees)} remontées avec vélos, {nb_velos} bike parks ajoutés", flush=True)
+    nb_pistes = bike_parks_pistes(pois, telesieges, pistes, domaines)
+    print(f"{code} : {len(pistes)} pistes VTT, {nb_pistes} bike parks ajoutés par leurs pistes", flush=True)
     nb_pieds = pied_des_pistes(pois, gares, domaines)
     print(f"{code} : {nb_pieds} stations de ski sur {len(domaines)} ramenées au pied des pistes", flush=True)
     print(f"{code} : {pres_de(pois, lieux)} stations et bike parks situés près d'un village", flush=True)
