@@ -46,6 +46,8 @@ FILTRE = [
     "nwr/amenity=hospital", "nwr/healthcare=hospital",
     # Randonnée, VTT, ski, cols.
     "nwr/highway=trailhead", "nwr/leisure=bike_park", "nwr/sport=mtb", "nwr/landuse=winter_sports", "n/mountain_pass=yes",
+    # Remontées qui prennent les vélos l'été : la plupart des bike parks de station ne sont notés que comme ça.
+    "w/aerialway:bicycle=yes,summer,designated,yes|summer",
     # Obstacles pour un camping-car (passages bas, étroits, poids, fortes pentes) : alertes sans réseau.
     "w/maxheight", "w/maxheight:physical", "n/maxheight", "w/maxwidth", "w/maxweight", "w/incline",
     # Ce qui fait un beau spot : point de vue, plage, cascade (pas des points affichés, voir beaux_spots).
@@ -65,7 +67,7 @@ TAGS_UTILES = {
     "contact:phone", "motorhome", "caravans", "caravan", "parking", "amenity", "tourism", "shop", "natural",
     "man_made", "fuel:lpg", "wheelchair",
     # Randonnée, VTT, ski, cols : de quoi les reconnaître dans l'appli, et l'altitude.
-    "highway", "leisure", "sport", "landuse", "mountain_pass", "ele",
+    "highway", "leisure", "sport", "landuse", "mountain_pass", "ele", "sg:velos", "sg:velos_ete",
     # Stations-service : enseigne, gazole, AdBlue, accès poids lourds (gabarit).
     "brand", "fuel:diesel", "fuel:adblue", "hgv", "fuel:octane_95", "fuel:octane_98", "fuel:e85",
     # Ajoutés par beaux_spots : beau lieu à proximité.
@@ -157,7 +159,7 @@ def categorie(t, type_osm):
         return "HOPITAL"
     if t.get("highway") == "trailhead":
         return "RANDO"
-    if t.get("leisure") == "bike_park" or ("mtb" in (t.get("sport") or "").split(";")
+    if t.get("sg:velos") or t.get("leisure") == "bike_park" or ("mtb" in (t.get("sport") or "").split(";")
                                           and t.get("leisure") in ("sports_centre", "park", "pitch", "track")):
         return "BIKE_PARK"
     if t.get("landuse") == "winter_sports" and t.get("name"):
@@ -210,6 +212,104 @@ def attrait(t):
     if t.get("waterway") == "waterfall":
         return "waterfall"
     return None
+
+
+# Remontées mécaniques qui transportent des vélos (le tapis ou le téléski, non : on n'y monte pas avec un vélo).
+REMONTEES_VELO = {"gondola", "chair_lift", "cable_car", "mixed_lift"}
+# Deux remontées dont les gares du bas sont à moins de 3 km : le même domaine VTT.
+RAYON_DOMAINE_M = 3_000.0
+# Deux points « bike park » à moins de 800 m : le même (pistes notées une à une).
+RAYON_BIKE_PARK_M = 800.0
+
+
+def metres(a, b):
+    k = math.cos(math.radians((a[0] + b[0]) / 2))
+    return math.hypot((a[0] - b[0]) * 111_320.0, (a[1] - b[1]) * 111_320.0 * k)
+
+
+def dans_anneau(lat, lon, anneau):
+    """Point dans un contour [[lon, lat], …] (lancer de rayon)."""
+    dedans = False
+    j = len(anneau) - 1
+    for i in range(len(anneau)):
+        xi, yi = anneau[i][0], anneau[i][1]
+        xj, yj = anneau[j][0], anneau[j][1]
+        if (yi > lat) != (yj > lat) and lon < (xj - xi) * (lat - yi) / (yj - yi) + xi:
+            dedans = not dedans
+        j = i
+    return dedans
+
+
+def contours(geom):
+    """Contours extérieurs d'un polygone ou multipolygone GeoJSON."""
+    g, c = geom.get("type"), geom.get("coordinates")
+    if g == "Polygon" and c:
+        return [c[0]]
+    if g == "MultiPolygon" and c:
+        return [p[0] for p in c if p]
+    return []
+
+
+def bike_parks(pois, remontees, domaines):
+    """
+    Bike parks de station : les remontées qui prennent les vélos, regroupées par
+    domaine (gares du bas à moins de 3 km). Un bike park déjà noté à moins de 3 km
+    reçoit le nombre de remontées ; sinon un point est créé à la gare du bas la plus
+    centrale, au nom du domaine skiable qui la contient (sinon celui de la remontée).
+    Un téléphérique de ville qui accepte les vélos n'est pas un bike park : sans
+    domaine skiable (une gare dedans) ni mention « l'été », le groupe est ignoré.
+    Ensuite, les pistes notées une à une (leisure=track) d'un même bike park ne
+    font plus qu'un point. Renvoie le nombre de bike parks ajoutés.
+    """
+    # Regroupement : union de proche en proche.
+    groupes = []
+    for r in remontees:
+        proches = [g for g in groupes if any(metres(r, x) <= RAYON_DOMAINE_M for x in g)]
+        nouveau = [r]
+        for g in proches:
+            nouveau += g
+            groupes.remove(g)
+        groupes.append(nouveau)
+    existants = [p for p in pois if categorie(p["tags"], p["id"][0]) == "BIKE_PARK"]
+    ajoutes = 0
+    for g in groupes:
+        ete = all(r[3] == "summer" for r in g)
+        deja = [p for p in existants if any(metres((p["lat"], p["lon"]), r) <= RAYON_DOMAINE_M for r in g)]
+        if deja:
+            for p in deja:
+                p["tags"]["sg:velos"] = str(len(g))
+                if ete:
+                    p["tags"]["sg:velos_ete"] = "yes"
+            continue
+        clat = sum(r[0] for r in g) / len(g)
+        clon = sum(r[1] for r in g) / len(g)
+        bas = min(g, key=lambda r: metres(r, (clat, clon)))
+
+        def domaine(r):
+            return next((d[0] for d in domaines for a in d[1]
+                         if dans_anneau(r[0], r[1], a) or dans_anneau(r[5], r[6], a)), None)
+        noms = [n for n in (domaine(r) for r in [bas] + g) if n]
+        if not noms and not any(r[3] == "summer" for r in g):
+            continue
+        nom = (noms[0] if noms else None) or bas[2]
+        tags = {"sg:velos": str(len(g))}
+        if ete:
+            tags["sg:velos_ete"] = "yes"
+        if nom:
+            tags["name"] = nom
+        pois.append({"id": bas[4], "lat": round(bas[0], 6), "lon": round(bas[1], 6), "tags": tags})
+        ajoutes += 1
+    # Un seul point par bike park : on garde le mieux décrit (bike_park, puis nommé, puis remontées).
+    bp = [p for p in pois if categorie(p["tags"], p["id"][0]) == "BIKE_PARK"]
+    bp.sort(key=lambda p: (p["tags"].get("leisure") != "bike_park", "name" not in p["tags"], "sg:velos" not in p["tags"]))
+    gardes, retires = [], set()
+    for p in bp:
+        if any(metres((p["lat"], p["lon"]), (q["lat"], q["lon"])) <= RAYON_BIKE_PARK_M for q in gardes):
+            retires.add(id(p))
+        else:
+            gardes.append(p)
+    pois[:] = [p for p in pois if id(p) not in retires]
+    return ajoutes
 
 
 # Rayon autour d'un lieu de stationnement : un beau lieu à moins de 300 m (quelques minutes à pied).
@@ -395,6 +495,7 @@ def construire(code, nom, dossier):
     os.remove(filtre)
 
     pois, vus, attraits, obstacles, deja_obstacles, zones = [], set(), [], [], set(), []
+    remontees, domaines = [], []
     with open(seq, encoding="utf-8") as f:
         for ligne in f:
             ligne = ligne.strip().lstrip("\x1e")
@@ -412,6 +513,19 @@ def construire(code, nom, dossier):
                 if a:
                     zones.append({"id": ident, "tags": {k: v for k, v in tags.items() if k in TAGS_ZONE}, "anneaux": a})
                 continue
+            if tags.get("aerialway") in REMONTEES_VELO and tags.get("aerialway:bicycle") in ("yes", "summer", "designated", "yes|summer"):
+                g = o.get("geometry") or {}
+                if g.get("type") == "LineString" and g.get("coordinates"):
+                    # Une remontée est tracée de bas en haut : le premier point est la gare du bas.
+                    lon0, lat0 = g["coordinates"][0][:2]
+                    lon1, lat1 = g["coordinates"][-1][:2]
+                    ete = "summer" if tags["aerialway:bicycle"] == "summer" else "yes"
+                    remontees.append((lat0, lon0, tags.get("name:fr") or tags.get("name"), ete, ident, lat1, lon1))
+                continue
+            if tags.get("landuse") == "winter_sports" and tags.get("name"):
+                a = contours(o.get("geometry") or {})
+                if a:
+                    domaines.append((tags.get("name:fr") or tags["name"], a))
             ob = obstacle(tags, ident[0]) if ident[0] in "nw" and ident not in deja_obstacles else None
             if ob:
                 deja_obstacles.add(ident)
@@ -440,6 +554,8 @@ def construire(code, nom, dossier):
     rues_porteuses(obstacles, pbf, dossier)
     os.remove(pbf)
     nb_spots = beaux_spots(pois, attraits)
+    nb_velos = bike_parks(pois, remontees, domaines)
+    print(f"{code} : {len(remontees)} remontées avec vélos, {nb_velos} bike parks ajoutés", flush=True)
     print(f"{code} : {len(attraits)} beaux lieux, {nb_spots} stationnements à proximité", flush=True)
 
     date = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
