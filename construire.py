@@ -261,7 +261,25 @@ def contours(geom):
     return []
 
 
-def bike_parks(pois, remontees, domaines):
+class Villages:
+    """Villes et villages en cases de 0,1° : distance au plus proche (une gare au village, pas en montagne)."""
+
+    def __init__(self, lieux):
+        self.grille = {}
+        for l in lieux:
+            self.grille.setdefault((int(l[0] * 10 // 1), int(l[1] * 10 // 1)), []).append(l)
+
+    def distance(self, pt):
+        gi, gj = int(pt[0] * 10 // 1), int(pt[1] * 10 // 1)
+        d = [metres(l, pt) for di in (-1, 0, 1) for dj in range(-3, 4) for l in self.grille.get((gi + di, gj + dj), ())]
+        return min(d) if d else 99_999.0
+
+
+# Une gare à moins de 1,5 km d'un village : au village (on y arrive en camping-car).
+GARE_AU_VILLAGE_M = 1_500.0
+
+
+def bike_parks(pois, remontees, domaines, villages=None):
     """
     Bike parks de station : les remontées qui prennent les vélos, regroupées par
     station (gares du bas à moins de 1,2 km). Un bike park déjà noté à moins de 1,2 km
@@ -294,7 +312,8 @@ def bike_parks(pois, remontees, domaines):
             continue
         clat = sum(r[0] for r in g) / len(g)
         clon = sum(r[1] for r in g) / len(g)
-        bas = min(g, key=lambda r: metres(r, (clat, clon)))
+        # La gare du bas la plus proche d'un village (Médran à Verbier, pas un télésiège à 2 200 m).
+        bas = min(g, key=lambda r: (villages.distance(r) if villages else 0, metres(r, (clat, clon))))
 
         def domaine(r):
             return next((d[0] for d in domaines for a in d[1]
@@ -340,7 +359,7 @@ def piste_vtt(t):
             and (t.get("bicycle") == "designated" or t.get("mtb") == "designated"))
 
 
-def bike_parks_pistes(pois, telesieges, pistes, domaines):
+def bike_parks_pistes(pois, telesieges, pistes, domaines, villages=None):
     """
     Bike parks que rien ne nomme ainsi (Vallnord, Châtel…) : des remontées (gares du
     bas à moins de 1,2 km) avec au moins 3 pistes VTT réservées aux vélos à moins de
@@ -387,7 +406,8 @@ def bike_parks_pistes(pois, telesieges, pistes, domaines):
                 p["tags"]["sg:pistes"] = str(nommees)
             continue
         cabines = [r for r in lifts if r[3] in ("gondola", "cable_car", "mixed_lift")]
-        bas = max(cabines or lifts, key=lambda r: len(autour(r)))
+        au_village = [r for r in (cabines or lifts) if villages and villages.distance(r) <= GARE_AU_VILLAGE_M]
+        bas = max(au_village or cabines or lifts, key=lambda r: len(autour(r)))
         nom = next((d[0] for d in domaines for a in d[1]
                     if any(dans_anneau(r[0], r[1], a) or dans_anneau(r[5], r[6], a) for r in lifts)), None)
         tags = {"sg:pistes": str(nommees)}
@@ -449,7 +469,7 @@ def fusion_par_village(pois):
     return len(retires)
 
 
-def pied_des_pistes(pois, gares, domaines):
+def pied_des_pistes(pois, gares, domaines, villages=None):
     """
     Une station de ski placée au centre de son domaine tombe en pleine montagne (un
     itinéraire y mènerait n'importe où) : elle est ramenée au pied des pistes, la gare
@@ -471,7 +491,9 @@ def pied_des_pistes(pois, gares, domaines):
         if not dedans:
             continue
         centre_d = (p["lat"], p["lon"])
-        pied = max(dedans, key=lambda g: (sum(1 for h in dedans if metres(g, h) <= RAYON_PIED_M), -metres(g, centre_d)))
+        # Une gare au village d'abord (s'il y en a), puis la plus entourée.
+        au_village = [g for g in dedans if villages and villages.distance(g) <= GARE_AU_VILLAGE_M]
+        pied = max(au_village or dedans, key=lambda g: (sum(1 for h in dedans if metres(g, h) <= RAYON_PIED_M), -metres(g, centre_d)))
         p["lat"], p["lon"] = round(pied[0], 6), round(pied[1], 6)
         n += 1
     return n
@@ -734,11 +756,12 @@ def construire(code, nom, dossier):
     rues_porteuses(obstacles, pbf, dossier)
     os.remove(pbf)
     nb_spots = beaux_spots(pois, attraits)
-    nb_velos = bike_parks(pois, remontees, domaines)
+    villages = Villages(lieux)
+    nb_velos = bike_parks(pois, remontees, domaines, villages)
     print(f"{code} : {len(remontees)} remontées avec vélos, {nb_velos} bike parks ajoutés", flush=True)
-    nb_pistes = bike_parks_pistes(pois, telesieges, pistes, domaines)
+    nb_pistes = bike_parks_pistes(pois, telesieges, pistes, domaines, villages)
     print(f"{code} : {len(pistes)} pistes VTT, {nb_pistes} bike parks ajoutés par leurs pistes", flush=True)
-    nb_pieds = pied_des_pistes(pois, gares, domaines)
+    nb_pieds = pied_des_pistes(pois, gares, domaines, villages)
     print(f"{code} : {nb_pieds} stations de ski sur {len(domaines)} ramenées au pied des pistes", flush=True)
     print(f"{code} : {pres_de(pois, lieux)} stations et bike parks situés près d'un village", flush=True)
     print(f"{code} : {fusion_par_village(pois)} bike parks fusionnés (même domaine, même village)", flush=True)
