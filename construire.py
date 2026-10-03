@@ -216,8 +216,9 @@ def attrait(t):
 
 # Remontées mécaniques qui transportent des vélos (le tapis ou le téléski, non : on n'y monte pas avec un vélo).
 REMONTEES_VELO = {"gondola", "chair_lift", "cable_car", "mixed_lift"}
-# Deux remontées dont les gares du bas sont à moins de 3 km : le même domaine VTT.
-RAYON_DOMAINE_M = 3_000.0
+# Deux remontées dont les gares du bas sont à moins de 1,2 km : la même station. Plus large, les
+# remontées s'enchaînent d'un village à l'autre (Morzine, Les Gets, Châtel : un seul point).
+RAYON_DOMAINE_M = 1_200.0
 # Deux points « bike park » à moins de 800 m : le même (pistes notées une à une).
 RAYON_BIKE_PARK_M = 800.0
 
@@ -253,7 +254,7 @@ def contours(geom):
 def bike_parks(pois, remontees, domaines):
     """
     Bike parks de station : les remontées qui prennent les vélos, regroupées par
-    domaine (gares du bas à moins de 3 km). Un bike park déjà noté à moins de 3 km
+    station (gares du bas à moins de 1,2 km). Un bike park déjà noté à moins de 1,2 km
     reçoit le nombre de remontées ; sinon un point est créé à la gare du bas la plus
     centrale, au nom du domaine skiable qui la contient (sinon celui de la remontée).
     Un téléphérique de ville qui accepte les vélos n'est pas un bike park : sans
