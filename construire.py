@@ -44,6 +44,8 @@ FILTRE = [
     "nwr/natural=spring",
     "nwr/shop=laundry,gas,supermarket,convenience,farm",
     "nwr/amenity=hospital", "nwr/healthcare=hospital",
+    # Randonnée, VTT, ski, cols.
+    "nwr/highway=trailhead", "nwr/leisure=bike_park", "nwr/sport=mtb", "nwr/landuse=winter_sports", "n/mountain_pass=yes",
     # Obstacles pour un camping-car (passages bas, étroits, poids, fortes pentes) : alertes sans réseau.
     "w/maxheight", "w/maxheight:physical", "n/maxheight", "w/maxwidth", "w/maxweight", "w/incline",
     # Ce qui fait un beau spot : point de vue, plage, cascade (pas des points affichés, voir beaux_spots).
@@ -62,6 +64,8 @@ TAGS_UTILES = {
     "check_date", "survey:date", "description", "description:fr", "website", "contact:website", "phone",
     "contact:phone", "motorhome", "caravans", "caravan", "parking", "amenity", "tourism", "shop", "natural",
     "man_made", "fuel:lpg", "wheelchair",
+    # Randonnée, VTT, ski, cols : de quoi les reconnaître dans l'appli, et l'altitude.
+    "highway", "leisure", "sport", "landuse", "mountain_pass", "ele",
     # Stations-service : enseigne, gazole, AdBlue, accès poids lourds (gabarit).
     "brand", "fuel:diesel", "fuel:adblue", "hgv", "fuel:octane_95", "fuel:octane_98", "fuel:e85",
     # Ajoutés par beaux_spots : beau lieu à proximité.
@@ -151,6 +155,15 @@ def categorie(t, type_osm):
         return "COURSES"
     if amenity == "hospital" or t.get("healthcare") == "hospital":
         return "HOPITAL"
+    if t.get("highway") == "trailhead":
+        return "RANDO"
+    if t.get("leisure") == "bike_park" or ("mtb" in (t.get("sport") or "").split(";")
+                                          and t.get("leisure") in ("sports_centre", "park", "pitch", "track")):
+        return "BIKE_PARK"
+    if t.get("landuse") == "winter_sports" and t.get("name"):
+        return "SKI"
+    if t.get("mountain_pass") == "yes":
+        return "COL"
     return None
 
 
