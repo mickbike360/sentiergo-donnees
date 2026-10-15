@@ -63,6 +63,8 @@ FILTRE = [
     "n/waterway=waterfall",
     # Zones à faibles émissions (ZFE, Umweltzonen…) : annoncées dès l'aperçu du trajet.
     "r/boundary=low_emission_zone",
+    # Régions et départements (niveaux 4 à 6) : savoir sans réseau où l'on passe (vigilances météo).
+    "r/admin_level=4,5,6",
 ]
 
 # Lieux cherchables sans réseau, du plus important au moins : leur rang dans la recherche.
@@ -649,6 +651,47 @@ def rues_porteuses(obstacles, pbf, dossier):
 TAGS_ZONE = ("name", "name:fr", "website", "description", "start_date", "operator")
 
 
+def simplifier_anneau(pts, tolerance):
+    """Douglas-Peucker sur [lat, lon] (tolérance en degrés) : un contour de région en quelques centaines de points."""
+    if len(pts) < 4:
+        return pts
+    garde = [False] * len(pts)
+    garde[0] = garde[-1] = True
+    pile = [(0, len(pts) - 1)]
+    while pile:
+        a, b = pile.pop()
+        (la, oa), (lb, ob) = pts[a], pts[b]
+        dl, do = lb - la, ob - oa
+        n2 = dl * dl + do * do
+        loin, imax = -1.0, -1
+        for i in range(a + 1, b):
+            l, o = pts[i]
+            if n2 == 0:
+                d = ((l - la) ** 2 + (o - oa) ** 2) ** 0.5
+            else:
+                d = abs(dl * (oa - o) - do * (la - l)) / n2 ** 0.5
+            if d > loin:
+                loin, imax = d, i
+        if loin > tolerance:
+            garde[imax] = True
+            pile += [(a, imax), (imax, b)]
+    return [p for p, g in zip(pts, garde) if g]
+
+
+def contours_region(geom, tolerance=0.003):
+    """Tous les anneaux (extérieurs et trous) d'une région, simplifiés à ~300 m, 3 décimales."""
+    g, c = geom.get("type"), geom.get("coordinates") or []
+    polys = [c] if g == "Polygon" else c if g == "MultiPolygon" else []
+    res = []
+    for poly in polys:
+        for ring in poly:
+            r = simplifier_anneau([[lat, lon] for lon, lat in ring], tolerance)
+            r = [[round(lat, 3), round(lon, 3)] for lat, lon in r]
+            if len(r) >= 4:
+                res.append(r)
+    return res
+
+
 def anneaux(geom):
     """Contours d'un (multi)polygone, allégés : un point tous les 30 m environ, 5 décimales (~1 m)."""
     g, c = geom.get("type"), geom.get("coordinates") or []
@@ -706,6 +749,8 @@ def construire(code, nom, dossier):
     remontees, domaines, gares, lieux, telesieges, pistes = [], [], [], [], [], []
     # Pour la recherche sans réseau : [nom, lat, lon, rang] (et le nom local s'il diffère du français).
     lieux_recherche = []
+    # Régions et départements : {"noms": [...], "niveau": n, "anneaux": [...]}.
+    regions = []
     with open(seq, encoding="utf-8") as f:
         for ligne in f:
             ligne = ligne.strip().lstrip("\x1e")
@@ -718,6 +763,12 @@ def construire(code, nom, dossier):
                 continue
             ident = identifiant(str(brut))
             tags = {k: str(v) for k, v in props.items() if not k.startswith("@")}
+            if tags.get("boundary") == "administrative" and tags.get("admin_level") in ("4", "5", "6") and ident[0] == "r":
+                a = contours_region(o.get("geometry") or {})
+                noms = [n for n in dict.fromkeys(tags.get(k) for k in ("name", "name:fr", "name:en", "official_name")) if n]
+                if a and noms:
+                    regions.append({"noms": noms, "niveau": int(tags["admin_level"]), "anneaux": a})
+                continue
             if tags.get("boundary") == "low_emission_zone":
                 a = anneaux(o.get("geometry") or {})
                 if a:
@@ -801,7 +852,7 @@ def construire(code, nom, dossier):
     sortie = os.path.join(dossier, f"{code}.json.gz")
     with gzip.open(sortie, "wt", encoding="utf-8", compresslevel=9) as f:
         json.dump({"pays": code, "version": date, "pois": pois, "obstacles": obstacles, "zones": zones,
-                   "lieux": lieux_recherche}, f,
+                   "lieux": lieux_recherche, "regions": regions}, f,
                   ensure_ascii=False, separators=(",", ":"))
     compte = {}
     for p in pois:
@@ -809,7 +860,7 @@ def construire(code, nom, dossier):
         compte[cat] = compte.get(cat, 0) + 1
     meta = {"code": code, "fichier": f"{code}.json.gz", "taille": os.path.getsize(sortie),
             "nb": len(pois), "categories": compte, "obstacles": len(obstacles), "zones": len(zones),
-            "lieux": len(lieux_recherche), "version": date}
+            "lieux": len(lieux_recherche), "regions": len(regions), "version": date}
     with open(os.path.join(dossier, f"{code}.meta.json"), "w", encoding="utf-8") as f:
         json.dump(meta, f)
     print(f"{code} : {len(pois)} points, {meta['taille'] // 1024} Ko", flush=True)
