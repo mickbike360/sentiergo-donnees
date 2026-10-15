@@ -50,7 +50,8 @@ FILTRE = [
     # Remontées : le pied des pistes d'une station de ski, et celles qui prennent les vélos l'été
     # (la plupart des bike parks de station ne sont notés que comme ça).
     # Villes et villages : « près de Morzine » pour une station ou un bike park au nom de domaine.
-    "n/place=city,town,village",
+    # Hameaux, lieux-dits et quartiers en plus : la recherche sans réseau (« Mouillère »).
+    "n/place=city,town,village,hamlet,locality,suburb,quarter",
     # Pistes VTT (difficulté notée) : réservées aux vélos près des remontées, c'est un bike park.
     "w/mtb:scale",
     "w/aerialway=gondola,chair_lift,cable_car,mixed_lift,drag_lift,t-bar,j-bar,platter,rope_tow,magic_carpet",
@@ -63,6 +64,9 @@ FILTRE = [
     # Zones à faibles émissions (ZFE, Umweltzonen…) : annoncées dès l'aperçu du trajet.
     "r/boundary=low_emission_zone",
 ]
+
+# Lieux cherchables sans réseau, du plus important au moins : leur rang dans la recherche.
+RANG_LIEU = {"city": 0, "town": 1, "village": 2, "suburb": 2, "hamlet": 3, "quarter": 3, "locality": 3}
 
 # Tags gardés : ce que l'appli affiche ou utilise pour trier.
 TAGS_UTILES = {
@@ -700,6 +704,8 @@ def construire(code, nom, dossier):
 
     pois, vus, attraits, obstacles, deja_obstacles, zones = [], set(), [], [], set(), []
     remontees, domaines, gares, lieux, telesieges, pistes = [], [], [], [], [], []
+    # Pour la recherche sans réseau : [nom, lat, lon, rang] (et le nom local s'il diffère du français).
+    lieux_recherche = []
     with open(seq, encoding="utf-8") as f:
         for ligne in f:
             ligne = ligne.strip().lstrip("\x1e")
@@ -717,10 +723,17 @@ def construire(code, nom, dossier):
                 if a:
                     zones.append({"id": ident, "tags": {k: v for k, v in tags.items() if k in TAGS_ZONE}, "anneaux": a})
                 continue
-            if tags.get("place") in ("city", "town", "village") and ident[0] == "n":
+            if tags.get("place") in RANG_LIEU and ident[0] == "n":
                 g = o.get("geometry") or {}
-                if g.get("type") == "Point" and (tags.get("name:fr") or tags.get("name")):
-                    lieux.append((g["coordinates"][1], g["coordinates"][0], tags.get("name:fr") or tags["name"]))
+                nom = tags.get("name:fr") or tags.get("name")
+                if g.get("type") == "Point" and nom:
+                    lat, lon = g["coordinates"][1], g["coordinates"][0]
+                    if tags["place"] in ("city", "town", "village"):
+                        lieux.append((lat, lon, nom))
+                    l = [nom, round(lat, 5), round(lon, 5), RANG_LIEU[tags["place"]]]
+                    if tags.get("name") and tags["name"] != nom:
+                        l.append(tags["name"])
+                    lieux_recherche.append(l)
                 if categorie(tags, ident[0]) is None:
                     continue
             if piste_vtt(tags):
@@ -787,14 +800,16 @@ def construire(code, nom, dossier):
     date = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     sortie = os.path.join(dossier, f"{code}.json.gz")
     with gzip.open(sortie, "wt", encoding="utf-8", compresslevel=9) as f:
-        json.dump({"pays": code, "version": date, "pois": pois, "obstacles": obstacles, "zones": zones}, f,
+        json.dump({"pays": code, "version": date, "pois": pois, "obstacles": obstacles, "zones": zones,
+                   "lieux": lieux_recherche}, f,
                   ensure_ascii=False, separators=(",", ":"))
     compte = {}
     for p in pois:
         cat = categorie(p["tags"], p["id"][0])
         compte[cat] = compte.get(cat, 0) + 1
     meta = {"code": code, "fichier": f"{code}.json.gz", "taille": os.path.getsize(sortie),
-            "nb": len(pois), "categories": compte, "obstacles": len(obstacles), "zones": len(zones), "version": date}
+            "nb": len(pois), "categories": compte, "obstacles": len(obstacles), "zones": len(zones),
+            "lieux": len(lieux_recherche), "version": date}
     with open(os.path.join(dossier, f"{code}.meta.json"), "w", encoding="utf-8") as f:
         json.dump(meta, f)
     print(f"{code} : {len(pois)} points, {meta['taille'] // 1024} Ko", flush=True)
