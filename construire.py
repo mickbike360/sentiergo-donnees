@@ -846,6 +846,18 @@ def construire(code, nom, dossier):
     os.remove(pbf)
     nb_spots = beaux_spots(pois, attraits)
     villages = Villages(lieux)
+    # Une plage sans nom prend celui du village voisin : « Plage · près de Nice », pas six « Plage » à la suite.
+    grille = {}
+    for l in lieux:
+        grille.setdefault((int(l[0] * 10 // 1), int(l[1] * 10 // 1)), []).append(l)
+    for e in lieux_recherche:
+        if e[3] == 5 and e[0] == "Plage":
+            gi, gj = int(e[1] * 10 // 1), int(e[2] * 10 // 1)
+            proches = [l for di in (-1, 0, 1) for dj in (-1, 0, 1) for l in grille.get((gi + di, gj + dj), ())]
+            if proches:
+                v = min(proches, key=lambda l: metres(l, (e[1], e[2])))
+                if metres(v, (e[1], e[2])) <= 10_000:
+                    e[0] = f"Plage · près de {v[2]}"
     nb_velos = bike_parks(pois, remontees, domaines, villages)
     print(f"{code} : {len(remontees)} remontées avec vélos, {nb_velos} bike parks ajoutés", flush=True)
     nb_pistes = bike_parks_pistes(pois, telesieges, pistes, domaines, villages)
