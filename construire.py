@@ -67,6 +67,9 @@ FILTRE = [
     "r/admin_level=4,5,6",
 ]
 
+# Plages, points de vue, cascades parmi les lieux cherchables : rang à part (recherche par type).
+RANG_ATTRAIT = {"beach": 5, "viewpoint": 6, "waterfall": 7}
+
 # Lieux cherchables sans réseau, du plus important au moins : leur rang dans la recherche.
 RANG_LIEU = {"city": 0, "town": 1, "village": 2, "suburb": 2, "hamlet": 3, "quarter": 3, "locality": 3}
 
@@ -820,6 +823,11 @@ def construire(code, nom, dossier):
                 c = centre(o.get("geometry") or {})
                 if c:
                     attraits.append((c[0], c[1], a, tags.get("name:fr") or tags.get("name") or ""))
+                    # Cherchables par leur type (« plage ») : les plages même sans nom, les points de vue
+                    # et cascades nommés.
+                    nom_a = tags.get("name:fr") or tags.get("name")
+                    if nom_a or a == "beach":
+                        lieux_recherche.append([nom_a or "Plage", round(c[0], 5), round(c[1], 5), RANG_ATTRAIT[a]])
                 # Une plage ou un point de vue n'est pas lui-même un point affiché
                 # (sauf s'il est aussi, par exemple, un point d'eau).
                 if categorie(tags, ident[0]) is None:
